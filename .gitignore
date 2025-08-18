@@ -91,3 +91,4 @@ yolov8n.pt
 # Project directories
 sort/
 automatic-number-plate-recognition-python-yolov8/
+deep_sort/

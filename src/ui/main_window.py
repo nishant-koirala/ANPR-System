@@ -91,7 +91,7 @@ class PlateDetectorDashboard(QWidget):
         self.suppress_slider_update = False
         
         # Settings
-        self.license_format = 'format1'
+        self.license_format = 'auto'
         self.frame_skip = settings.DEFAULT_FRAME_SKIP
         self.hide_bboxes = False
         self.camera_source = "video"
@@ -534,6 +534,13 @@ class PlateDetectorDashboard(QWidget):
         self.lp_format_combo = QComboBox()
         self.lp_format_combo.addItems(list(FORMAT_DISPLAY_NAMES.values()))
         self.lp_format_combo.currentTextChanged.connect(self.change_license_format)
+        # Preselect to current license_format
+        try:
+            current_display = FORMAT_DISPLAY_NAMES.get(self.license_format, FORMAT_DISPLAY_NAMES.get('format1'))
+            if current_display:
+                self.lp_format_combo.setCurrentText(current_display)
+        except Exception:
+            pass
         lp_layout.addWidget(self.lp_format_combo)
         lp_group.setLayout(lp_layout)
         layout.addWidget(lp_group)
