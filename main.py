@@ -49,11 +49,8 @@ class ANPRApplication(PlateDetectorDashboard):
         # Step 1: Detect vehicles
         vehicle_detections = self.vehicle_detector.detect_vehicles(original_img)
         
-        # Step 2: Update tracker
-        if vehicle_detections is None or len(vehicle_detections) == 0:
-            vehicle_detections = np.empty((0, 5))
-        
-        tracked_vehicles = self.tracker.update(vehicle_detections)
+        # Step 2: Update tracker (wrapper handles normalization and empty cases)
+        tracked_vehicles = self.update_tracker(vehicle_detections, frame=original_img)
         
         # Track vehicles with plates for display
         vehicles_with_plates = set()

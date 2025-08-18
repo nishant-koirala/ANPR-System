@@ -2,6 +2,7 @@ import sys
 import os
 import cv2
 import numpy as np
+import traceback
 import shutil
 from datetime import datetime
 from collections import defaultdict
@@ -30,6 +31,8 @@ class PlateDetectorDashboard(QWidget):
         self.setGeometry(100, 100, 1400, 900)
 
         # Initialize components
+        # Ensure tracker_type is available before models are set up
+        self.tracker_type = getattr(settings, 'TRACKER_TYPE', 'SORT')
         self.setup_models()
         self.setup_tracking()
         self.setup_ui_state()
@@ -53,13 +56,9 @@ class PlateDetectorDashboard(QWidget):
         self.vehicle_detector = VehicleDetector(self.device)
         self.plate_detector = PlateDetector(self.device)
         self.plate_reader = PlateReader()
-        
-        # SORT tracker
-        self.tracker = Sort(
-            max_age=settings.TRACKER_MAX_AGE, 
-            min_hits=settings.TRACKER_MIN_HITS, 
-            iou_threshold=settings.TRACKER_IOU_THRESHOLD
-        )
+
+        # Initialize tracker based on settings
+        self.init_tracker()
 
     def setup_tracking(self):
         """Initialize tracking variables"""
@@ -98,6 +97,7 @@ class PlateDetectorDashboard(QWidget):
         self.log_file_path = os.path.expanduser("~")
         self.manual_export_mode = "Manual Export"
         self.auto_backup_interval = "Daily"
+        self.tracker_type = getattr(settings, 'TRACKER_TYPE', 'SORT')
         
         # Counters for dashboard cards
         self.total_tracked = 0
@@ -275,7 +275,8 @@ class PlateDetectorDashboard(QWidget):
             'DEFAULT_DETECTION_INTERVAL': self.det_interval_spin.value(),
             'MAX_FRAME_WIDTH': self.max_width_spin.value(),
             'THREAD_COUNT': self.thread_spin.value(),
-            'USE_GPU': self.gpu_check.isChecked()
+            'USE_GPU': self.gpu_check.isChecked(),
+            'TRACKER_TYPE': 'DEEPSORT' if self.tracker_combo.currentText() == 'Deep SORT' else 'SORT'
         })
         
         # Update config module
@@ -303,6 +304,13 @@ class PlateDetectorDashboard(QWidget):
             else:
                 self.device = 'cpu'
             print(f"Device set to: {self.device}")
+
+        # Reinitialize tracker if type changed
+        if self.tracker_type != self.current_settings.get('TRACKER_TYPE', self.tracker_type):
+            self.tracker_type = self.current_settings['TRACKER_TYPE']
+            self.init_tracker()
+            # Clear tracking state to avoid mixing track IDs
+            self.setup_tracking()
 
     def build_ui(self):
         """Build the main UI"""
@@ -545,6 +553,22 @@ class PlateDetectorDashboard(QWidget):
         lp_group.setLayout(lp_layout)
         layout.addWidget(lp_group)
 
+        # Tracking Algorithm
+        track_group = QGroupBox("Tracking Algorithm")
+        track_layout = QHBoxLayout()
+        self.tracker_combo = QComboBox()
+        self.tracker_combo.addItems(["SORT", "Deep SORT"])
+        # Preselect
+        try:
+            preselect = "Deep SORT" if str(self.tracker_type).upper() == 'DEEPSORT' else "SORT"
+            self.tracker_combo.setCurrentText(preselect)
+        except Exception:
+            pass
+        self.tracker_combo.currentTextChanged.connect(self.change_tracker_type)
+        track_layout.addWidget(self.tracker_combo)
+        track_group.setLayout(track_layout)
+        layout.addWidget(track_group)
+
         # Add comprehensive settings groups
         self.create_detection_settings(layout)
         self.create_ocr_settings(layout)
@@ -601,6 +625,127 @@ class PlateDetectorDashboard(QWidget):
         self.vehicle_final_plates.clear()
         self.plate_ownership.clear()
         self.vehicle_plate_candidates.clear()
+
+    def change_tracker_type(self, text):
+        """Handle tracker type change from UI"""
+        new_type = 'DEEPSORT' if text == 'Deep SORT' else 'SORT'
+        if new_type != self.tracker_type:
+            self.tracker_type = new_type
+            settings.TRACKER_TYPE = new_type
+            self.init_tracker()
+            # Reset tracking state
+            self.setup_tracking()
+
+    def init_tracker(self):
+        """Initialize underlying tracker based on current tracker_type"""
+        try:
+            # Fallback to settings if attribute not yet present
+            local_tracker_type = getattr(self, 'tracker_type', getattr(settings, 'TRACKER_TYPE', 'SORT'))
+            if str(local_tracker_type).upper() == 'DEEPSORT':
+                try:
+                    from deep_sort_realtime.deepsort_tracker import DeepSort
+                except ImportError:
+                    QMessageBox.warning(self, "Deep SORT Missing", "deep-sort-realtime not installed. Falling back to SORT.")
+                    self.tracker_type = 'SORT'
+                    settings.TRACKER_TYPE = 'SORT'
+                
+                if str(getattr(self, 'tracker_type', 'SORT')).upper() == 'DEEPSORT':
+                    # Initialize DeepSort with approximate mapping of settings
+                    self.tracker = DeepSort(
+                        max_age=getattr(settings, 'TRACKER_MAX_AGE', 50),
+                        n_init=getattr(settings, 'TRACKER_MIN_HITS', 1),
+                        max_iou_distance=getattr(settings, 'TRACKER_IOU_THRESHOLD', 0.4),
+                    )
+                    print("Initialized tracker: Deep SORT")
+                    return
+            # Default: SORT
+            self.tracker = Sort(
+                max_age=settings.TRACKER_MAX_AGE,
+                min_hits=settings.TRACKER_MIN_HITS,
+                iou_threshold=settings.TRACKER_IOU_THRESHOLD
+            )
+            print("Initialized tracker: SORT")
+        except Exception as e:
+            print(f"Tracker initialization error: {e}")
+            # Fallback to SORT
+            self.tracker = Sort(
+                max_age=settings.TRACKER_MAX_AGE,
+                min_hits=settings.TRACKER_MIN_HITS,
+                iou_threshold=settings.TRACKER_IOU_THRESHOLD
+            )
+
+    def update_tracker(self, detections, frame=None):
+        """Unified tracker update that returns [[x1,y1,x2,y2,track_id], ...]"""
+        try:
+            # Normalize detections to numpy array of shape (N, 5): [x1,y1,x2,y2,conf]
+            if detections is None:
+                det_arr = np.empty((0, 5), dtype=float)
+            else:
+                # Guard against accidental scalar values
+                if isinstance(detections, (int, float, np.integer, np.floating)):
+                    det_arr = np.empty((0, 5), dtype=float)
+                else:
+                    det_arr = np.asarray(detections)
+                    if det_arr.size == 0:
+                        det_arr = np.empty((0, 5), dtype=float)
+                    elif det_arr.ndim == 1:
+                        # Single detection vector or scalar
+                        if det_arr.size >= 4:
+                            # If only 4 coords, append conf=1.0
+                            if det_arr.size == 4:
+                                det_arr = np.hstack([det_arr.astype(float), [1.0]])
+                            det_arr = det_arr.reshape(1, -1)
+                        else:
+                            det_arr = np.empty((0, 5), dtype=float)
+                    elif det_arr.ndim == 2:
+                        # Ensure we have 5 columns
+                        if det_arr.shape[1] == 4:
+                            conf_col = np.ones((det_arr.shape[0], 1), dtype=float)
+                            det_arr = np.hstack([det_arr.astype(float), conf_col])
+                        elif det_arr.shape[1] >= 5:
+                            det_arr = det_arr[:, :5].astype(float)
+                        else:
+                            det_arr = np.empty((0, 5), dtype=float)
+                    else:
+                        det_arr = np.empty((0, 5), dtype=float)
+
+            if str(self.tracker_type).upper() == 'DEEPSORT':
+                # Convert detections to DeepSort expected format: ([x, y, w, h], conf, class)
+                det_list = []
+                for d in det_arr:
+                    x1, y1, x2, y2, conf = float(d[0]), float(d[1]), float(d[2]), float(d[3]), float(d[4])
+                    w = max(0.0, x2 - x1)
+                    h = max(0.0, y2 - y1)
+                    det_list.append(([x1, y1, w, h], conf, 0))
+                tracks = self.tracker.update_tracks(det_list, frame=frame)
+                out = []
+                for t in tracks:
+                    try:
+                        if hasattr(t, 'is_confirmed') and not t.is_confirmed():
+                            continue
+                        bb = t.to_tlbr() if hasattr(t, 'to_tlbr') else None
+                        tid = t.track_id if hasattr(t, 'track_id') else None
+                        if bb is not None and tid is not None:
+                            out.append([bb[0], bb[1], bb[2], bb[3], int(tid)])
+                    except Exception:
+                        continue
+                return np.array(out) if len(out) > 0 else np.empty((0, 5))
+            else:
+                # SORT expects numpy array (N,5)
+                return self.tracker.update(det_arr)
+        except Exception as e:
+            try:
+                # Minimal diagnostics to identify bad input shapes/types
+                desc = f"type(detections)={type(detections)}, det_arr_shape={(det_arr.shape if 'det_arr' in locals() else 'NA')}"
+            except Exception:
+                desc = "diagnostic_unavailable"
+            print(f"Tracker update error: {e} | {desc}")
+            try:
+                print(traceback.format_exc())
+            except Exception:
+                pass
+            # Fallback no tracks
+            return np.empty((0, 5))
 
     def load_image(self):
         """Load and process single image"""
