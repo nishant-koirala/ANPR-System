@@ -20,11 +20,9 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from sort.sort import Sort
 from config import settings
 from config.license_formats import FORMAT_DISPLAY_NAMES
-from src.detection.vehicle_detector import VehicleDetector
-from src.detection.plate_detector import PlateDetector
-from src.ocr.plate_reader import PlateReader
 
 class PlateDetectorDashboard(QWidget):
+    trackerTypeChanged = pyqtSignal(str)
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ANPR - Entry Gate System")
@@ -52,10 +50,6 @@ class PlateDetectorDashboard(QWidget):
         import torch
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Using device: {self.device}")
-        
-        self.vehicle_detector = VehicleDetector(self.device)
-        self.plate_detector = PlateDetector(self.device)
-        self.plate_reader = PlateReader()
 
         # Initialize tracker based on settings
         self.init_tracker()
@@ -276,7 +270,11 @@ class PlateDetectorDashboard(QWidget):
             'MAX_FRAME_WIDTH': self.max_width_spin.value(),
             'THREAD_COUNT': self.thread_spin.value(),
             'USE_GPU': self.gpu_check.isChecked(),
-            'TRACKER_TYPE': 'DEEPSORT' if self.tracker_combo.currentText() == 'Deep SORT' else 'SORT'
+            'TRACKER_TYPE': (
+                'DEEPSORT' if self.tracker_combo.currentText() == 'Deep SORT' else
+                'BYTETRACK' if self.tracker_combo.currentText() == 'ByteTrack' else
+                'SORT'
+            )
         })
         
         # Update config module
@@ -557,10 +555,11 @@ class PlateDetectorDashboard(QWidget):
         track_group = QGroupBox("Tracking Algorithm")
         track_layout = QHBoxLayout()
         self.tracker_combo = QComboBox()
-        self.tracker_combo.addItems(["SORT", "Deep SORT"])
+        self.tracker_combo.addItems(["SORT", "Deep SORT", "ByteTrack"])
         # Preselect
         try:
-            preselect = "Deep SORT" if str(self.tracker_type).upper() == 'DEEPSORT' else "SORT"
+            tt = str(self.tracker_type).upper()
+            preselect = "Deep SORT" if tt == 'DEEPSORT' else ("ByteTrack" if tt == 'BYTETRACK' else "SORT")
             self.tracker_combo.setCurrentText(preselect)
         except Exception:
             pass
@@ -628,13 +627,23 @@ class PlateDetectorDashboard(QWidget):
 
     def change_tracker_type(self, text):
         """Handle tracker type change from UI"""
-        new_type = 'DEEPSORT' if text == 'Deep SORT' else 'SORT'
+        if text == 'Deep SORT':
+            new_type = 'DEEPSORT'
+        elif text == 'ByteTrack':
+            new_type = 'BYTETRACK'
+        else:
+            new_type = 'SORT'
         if new_type != self.tracker_type:
             self.tracker_type = new_type
             settings.TRACKER_TYPE = new_type
             self.init_tracker()
             # Reset tracking state
             self.setup_tracking()
+            try:
+                # Notify background worker (connected in ANPRApplication)
+                self.trackerTypeChanged.emit(new_type)
+            except Exception:
+                pass
 
     def init_tracker(self):
         """Initialize underlying tracker based on current tracker_type"""
@@ -658,6 +667,38 @@ class PlateDetectorDashboard(QWidget):
                     )
                     print("Initialized tracker: Deep SORT")
                     return
+            elif str(local_tracker_type).upper() == 'BYTETRACK':
+                try:
+                    try:
+                        from yolox.tracker.byte_tracker import BYTETracker
+                    except Exception:
+                        BYTETracker = None
+                    if BYTETracker is None:
+                        try:
+                            from bytetrack.byte_tracker import BYTETracker
+                        except Exception:
+                            BYTETracker = None
+                    if BYTETracker is None:
+                        raise ImportError("BYTETracker not installed")
+
+                    from types import SimpleNamespace
+                    bt_args = SimpleNamespace(
+                        track_thresh=getattr(settings, 'BYTETRACK_TRACK_THRESH', 0.25),
+                        match_thresh=getattr(settings, 'BYTETRACK_MATCH_THRESH', 0.8),
+                        track_buffer=getattr(settings, 'BYTETRACK_TRACK_BUFFER', 30),
+                        mot20=False,
+                    )
+                    fps = getattr(settings, 'VIDEO_FPS', 30)
+                    try:
+                        self.tracker = BYTETracker(bt_args, frame_rate=fps)
+                    except TypeError:
+                        self.tracker = BYTETracker(bt_args, fps)
+                    print("Initialized tracker: ByteTrack")
+                    return
+                except Exception:
+                    QMessageBox.warning(self, "ByteTrack Missing", "ByteTrack not installed. Falling back to SORT.")
+                    self.tracker_type = 'SORT'
+                    settings.TRACKER_TYPE = 'SORT'
             # Default: SORT
             self.tracker = Sort(
                 max_age=settings.TRACKER_MAX_AGE,
@@ -709,7 +750,11 @@ class PlateDetectorDashboard(QWidget):
                     else:
                         det_arr = np.empty((0, 5), dtype=float)
 
-            if str(self.tracker_type).upper() == 'DEEPSORT':
+            ttype = str(self.tracker_type).upper()
+            if not hasattr(self, 'tracker') or self.tracker is None:
+                return np.empty((0, 5))
+
+            if ttype == 'DEEPSORT':
                 # Convert detections to DeepSort expected format: ([x, y, w, h], conf, class)
                 det_list = []
                 for d in det_arr:
@@ -730,13 +775,51 @@ class PlateDetectorDashboard(QWidget):
                     except Exception:
                         continue
                 return np.array(out) if len(out) > 0 else np.empty((0, 5))
+            elif ttype == 'BYTETRACK':
+                # Prepare Nx5 [x1,y1,x2,y2,score]
+                if det_arr.shape[1] < 5:
+                    conf_col = np.ones((det_arr.shape[0], 1), dtype=float)
+                    det5 = np.hstack([det_arr[:, :4].astype(float), conf_col])
+                else:
+                    det5 = det_arr[:, :5].astype(float)
+
+                # Determine image size if available
+                try:
+                    img_h, img_w = (frame.shape[0], frame.shape[1]) if frame is not None else (0, 0)
+                except Exception:
+                    img_h, img_w = (0, 0)
+
+                # Call update with flexible signatures across versions
+                try:
+                    tracks = self.tracker.update(det5, (img_h, img_w), (img_h, img_w))
+                except TypeError:
+                    try:
+                        tracks = self.tracker.update(det5, (img_h, img_w))
+                    except Exception:
+                        return np.empty((0, 5))
+
+                out = []
+                for t in tracks:
+                    try:
+                        # Common YOLOX STrack interface
+                        if hasattr(t, 'tlbr'):
+                            bb = t.tlbr() if callable(t.tlbr) else t.tlbr
+                        elif hasattr(t, 'to_tlbr'):
+                            bb = t.to_tlbr()
+                        else:
+                            bb = None
+                        tid = int(t.track_id) if hasattr(t, 'track_id') else None
+                        if bb is not None and tid is not None:
+                            out.append([bb[0], bb[1], bb[2], bb[3], tid])
+                    except Exception:
+                        continue
+                return np.array(out) if len(out) > 0 else np.empty((0, 5))
             else:
-                # SORT expects numpy array (N,5)
+                # Default: SORT expects Nx5 [x1,y1,x2,y2,score]
                 return self.tracker.update(det_arr)
         except Exception as e:
             try:
-                # Minimal diagnostics to identify bad input shapes/types
-                desc = f"type(detections)={type(detections)}, det_arr_shape={(det_arr.shape if 'det_arr' in locals() else 'NA')}"
+                desc = f"type(detections)={type(detections)}"
             except Exception:
                 desc = "diagnostic_unavailable"
             print(f"Tracker update error: {e} | {desc}")
@@ -751,7 +834,8 @@ class PlateDetectorDashboard(QWidget):
         """Load and process single image"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg)")
         if file_path:
-            self.process_frame(file_path, preview=False)
+            # For single image, request processed overlay to be shown
+            self.process_frame(file_path, preview=True)
 
     def load_video(self):
         """Load video file"""
@@ -794,6 +878,9 @@ class PlateDetectorDashboard(QWidget):
         """Read and process video frame"""
         if not self.cap:
             return
+        # If user is actively seeking via slider, skip timer-driven reads to prevent clashes
+        if getattr(self, 'seeking', False):
+            return
         ret, frame = self.cap.read()
         if not ret:
             # End of video: loop or stop
@@ -813,17 +900,12 @@ class PlateDetectorDashboard(QWidget):
 
         self.frame_counter += 1
 
-        # Show preview
-        if self.hide_bboxes:
-            self.show_plain_frame(frame)
-        else:
-            self.show_plain_frame(frame)
+        # Display current frame once using latest cached overlay to avoid flicker
+        self.show_frame_with_cached_detections(frame)
 
-        # Run detection every 2nd frame
+        # Queue background processing at interval (do not immediately redraw processed frame)
         if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
-            self.process_frame(frame, preview=True)
-        else:
-            self.show_frame_with_cached_detections(frame)
+            self.process_frame(frame, preview=False)
 
         # Update progress UI
         self.update_progress_ui()
@@ -894,17 +976,25 @@ class PlateDetectorDashboard(QWidget):
             return
         index = max(0, min(index, self.total_frames - 1))
         try:
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                try:
+                    curr = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+                except Exception:
+                    curr = -1
+                print(f"DEBUG UI: seek_to_frame -> request={index}, current={curr}, total={self.total_frames}, playing={self.playing}")
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, index)
             ret, frame = self.cap.read()
             if ret:
                 # Adjust because after read(), internal pos moves forward by one
                 current_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+                if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                    print(f"DEBUG UI: seek_to_frame -> read ok, new_index={current_idx}")
                 self.frame_counter += 1
-                # Display
+                # Display with cached overlay to avoid flicker
+                self.show_frame_with_cached_detections(frame)
+                # Queue background processing at interval
                 if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
-                    self.process_frame(frame, preview=True)
-                else:
-                    self.show_frame_with_cached_detections(frame)
+                    self.process_frame(frame, preview=False)
                 # Update UI
                 self.update_progress_ui(force_index=current_idx)
         except Exception as e:
@@ -913,12 +1003,43 @@ class PlateDetectorDashboard(QWidget):
     def step_frame(self, delta):
         if not self.cap or self.total_frames == 0:
             return
-        # Pause if playing
-        if self.playing:
-            self.toggle_video()
-        current_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        # Always stop timer before stepping to avoid unintended continuous playback
+        try:
+            if hasattr(self, 'timer') and self.timer.isActive():
+                self.timer.stop()
+                self.playing = False
+                self.play_btn.setText("▶ Play")
+        except Exception:
+            pass
+        # Determine current index safely
+        try:
+            current_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        except Exception:
+            current_idx = 0
         target = current_idx + delta
-        self.seek_to_frame(target)
+        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+            print(f"DEBUG UI: step_frame -> delta={delta}, current={current_idx}, target={target}, timer_active={self.timer.isActive() if hasattr(self,'timer') else None}")
+        # Fast path for +1 to avoid re-seek overhead and reduce backend quirks
+        if delta == 1:
+            ret, frame = self.cap.read()
+            if not ret:
+                # End of video behavior
+                if self.loop_enabled and self.total_frames > 0:
+                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = self.cap.read()
+                if not ret:
+                    return
+            self.frame_counter += 1
+            self.show_frame_with_cached_detections(frame)
+            if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
+                self.process_frame(frame, preview=False)
+            try:
+                new_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            except Exception:
+                new_idx = target
+            self.update_progress_ui(force_index=max(0, min(new_idx, self.total_frames - 1)))
+        else:
+            self.seek_to_frame(target)
 
     def update_progress_ui(self, force_index=None):
         if not self.cap or self.total_frames == 0:

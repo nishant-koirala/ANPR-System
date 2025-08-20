@@ -17,177 +17,185 @@ sys.path.append(os.path.dirname(__file__))
 
 from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QLabel
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from src.ui.main_window import PlateDetectorDashboard
-from src.detection.vehicle_detector import VehicleDetector
-from src.detection.plate_detector import PlateDetector
-from src.ocr.plate_reader import PlateReader
 from config.settings import (DEBUG_OCR_VERBOSE, DEBUG_SAVE_IMAGES, MIN_DETECTIONS_FOR_FINAL, 
                              CONFIDENCE_THRESHOLD_FINAL, IMMEDIATE_FINALIZATION_THRESHOLD)
+from src.threading.frame_worker import FrameWorker
 
 class ANPRApplication(PlateDetectorDashboard):
     """Main ANPR Application extending the UI"""
-    
+
+    # Signal to request background processing of a frame
+    frameRequested = pyqtSignal(object, int, bool, str, bool)
+
     def __init__(self):
         super().__init__()
-        
+
+        # Initialize background worker thread (Phase 1)
+        self.worker_thread = QThread(self)
+        self.worker = FrameWorker()
+        self.worker.moveToThread(self.worker_thread)
+
+        # Wire signals
+        self.frameRequested.connect(self.worker.process_frame)
+        self.worker.sig_frameProcessed.connect(self.on_worker_frame_processed)
+        self.worker.sig_error.connect(self.on_worker_error)
+        # Connect tracker type change from UI to worker slot for runtime switching
+        try:
+            self.trackerTypeChanged.connect(self.worker.set_tracker_type)
+        except Exception:
+            pass
+
+        self.worker_thread.start()
+
+        # Pass debug directory to worker if available
+        if hasattr(self, 'debug_dir'):
+            try:
+                self.worker.set_debug_dir(self.debug_dir)
+            except Exception:
+                pass
+
     def process_frame(self, frame_or_path, preview=False):
-        """Process a frame (numpy array) or an image file path for vehicle and plate detection"""
-        # Support both in-memory frames and file paths
-        if isinstance(frame_or_path, np.ndarray):
-            original_img = frame_or_path
-        else:
-            original_img = cv2.imread(frame_or_path)
-        if original_img is None or (hasattr(original_img, 'size') and original_img.size == 0):
-            return
-        
-        show_img = original_img.copy()
-        
-        # Set frame counter for OCR debug naming
-        self.plate_reader.set_frame_counter(self.frame_counter)
-        
-        # Step 1: Detect vehicles
-        vehicle_detections = self.vehicle_detector.detect_vehicles(original_img)
-        
-        # Step 2: Update tracker (wrapper handles normalization and empty cases)
-        tracked_vehicles = self.update_tracker(vehicle_detections, frame=original_img)
-        
-        # Track vehicles with plates for display
-        vehicles_with_plates = set()
-        
-        # Step 3: Process each tracked vehicle
-        for vehicle in tracked_vehicles:
-            x1, y1, x2, y2, sort_id = vehicle
-            sort_id = int(sort_id)
-            
-            # Map SORT ID to continuous ID
-            if sort_id not in self.vehicle_id_map:
-                self.vehicle_id_map[sort_id] = len(self.vehicle_id_map) + 1
-            continuous_id = self.vehicle_id_map[sort_id]
-            self.unique_vehicles.add(continuous_id)
-            
-            # Extract vehicle ROI for plate detection
-            roi = original_img[int(y1):int(y2), int(x1):int(x2)]
-            if roi.size == 0:
-                continue
-                
-            # Step 4: Detect plates in vehicle ROI
-            plate_detections = self.plate_detector.detect_plates_in_roi(roi)
-            if DEBUG_OCR_VERBOSE:
-                print(f"DEBUG: Vehicle {continuous_id} - Found {len(plate_detections)} plate detections")
-            
-            # Step 5: Process detected plates
-            for plate_det in plate_detections:
-                px1, py1, px2, py2, conf = plate_det
-                
-                # Convert plate coordinates back to original image coordinates
-                abs_px1 = int(x1 + px1)
-                abs_py1 = int(y1 + py1)
-                abs_px2 = int(x1 + px2)
-                abs_py2 = int(y1 + py2)
-                
-                # Extract plate image for OCR
-                plate_img = original_img[abs_py1:abs_py2, abs_px1:abs_px2]
-                if plate_img.size == 0:
+        """Enqueue frame for processing in the worker (keeps UI responsive)."""
+        try:
+            # Support both in-memory frames and file paths
+            if isinstance(frame_or_path, np.ndarray):
+                frame = frame_or_path
+            else:
+                frame = cv2.imread(frame_or_path)
+            if frame is None or (hasattr(frame, 'size') and frame.size == 0):
+                return
+
+            # Emit to worker
+            self.frameRequested.emit(frame, self.frame_counter, self.hide_bboxes, self.license_format, bool(preview))
+        except Exception as e:
+            print(f"process_frame enqueue error: {e}")
+
+    def on_worker_frame_processed(self, result):
+        """Handle processed frame results on the UI thread."""
+        try:
+            show_img = result.get('frame', None)
+            tracks = result.get('tracks', [])
+            plates = result.get('plates', [])
+            preview = result.get('preview', False)
+
+            vehicles_with_plates = set()
+
+            # Map and register vehicle IDs
+            for item in tracks:
+                try:
+                    x1, y1, x2, y2, sort_id = item
+                    sort_id = int(sort_id)
+                    if sort_id not in self.vehicle_id_map:
+                        self.vehicle_id_map[sort_id] = len(self.vehicle_id_map) + 1
+                    continuous_id = self.vehicle_id_map[sort_id]
+                    self.unique_vehicles.add(continuous_id)
+                except Exception:
                     continue
-                
-                # Draw plate bounding box
-                if not self.hide_bboxes:
-                    cv2.rectangle(show_img, (abs_px1, abs_py1), (abs_px2, abs_py2), (0, 0, 255), 2)
-                
-                # Extract text using OCR
-                plate_text, ocr_confidence = self.plate_reader.extract_plate_text(plate_img, self.license_format)
-                
-                # Debug OCR results
-                if DEBUG_OCR_VERBOSE:
-                    print(f"DEBUG: OCR result for vehicle {continuous_id}: text='{plate_text}', confidence={ocr_confidence}")
-                
-                # Add ALL detected plates to preview panel (even if invalid)
-                is_valid = plate_text is not None
-                
-                # Debug: Print what we're getting from OCR
-                print(f"DEBUG MAIN: Vehicle {continuous_id} - OCR returned: text='{plate_text}', conf={ocr_confidence}")
-                
-                self.add_plate_to_preview(plate_img, continuous_id, plate_text, ocr_confidence, is_valid)
-                
-                # Update counters
-                if is_valid:
-                    self.valid_plates_count += 1
-                else:
-                    self.missed_plates_count += 1
-                
-                # Process valid plates
-                if plate_text is not None:
-                    # Add to vehicle's plate candidates
-                    self.add_plate_candidate(continuous_id, plate_text, ocr_confidence)
-                    
-                    # Try to finalize plate assignment
-                    final_plate_info = self.get_final_plate_for_vehicle(continuous_id)
-                    
-                    if final_plate_info:
-                        final_plate_text = final_plate_info['text']
-                        final_confidence = final_plate_info['confidence']
-                        
-                        # Check length based on format (support 'auto')
-                        clean_text = final_plate_text.replace(' ', '').replace('\n', '')
-                        if self.license_format == 'format1':
-                            expected_lengths = {7}
-                        elif self.license_format == 'format2':
-                            expected_lengths = {6}
-                        else:  # 'auto' mode supports both
-                            expected_lengths = {6, 7}
-                        
-                        if len(clean_text) in expected_lengths:
-                            if final_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD:
-                                # Store plate info
+
+            # Process each plate OCR result
+            for p in plates:
+                try:
+                    sort_id = int(p['sort_id'])
+                    abs_px1, abs_py1, abs_px2, abs_py2 = p['abs_bbox']
+                    plate_img = p['plate_img']
+                    plate_text = p['text']
+                    ocr_confidence = p['confidence']
+
+                    continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
+
+                    is_valid = plate_text is not None
+                    if DEBUG_OCR_VERBOSE:
+                        print(f"DEBUG: OCR result for vehicle {continuous_id}: text='{plate_text}', confidence={ocr_confidence}")
+                    print(f"DEBUG MAIN: Vehicle {continuous_id} - OCR returned: text='{plate_text}', conf={ocr_confidence}")
+
+                    self.add_plate_to_preview(plate_img, continuous_id, plate_text, ocr_confidence, is_valid)
+
+                    if is_valid:
+                        self.valid_plates_count += 1
+                    else:
+                        self.missed_plates_count += 1
+
+                    if plate_text is not None:
+                        # Candidate/finalization logic remains unchanged
+                        self.add_plate_candidate(continuous_id, plate_text, ocr_confidence if ocr_confidence is not None else 0.0)
+                        final_plate_info = self.get_final_plate_for_vehicle(continuous_id)
+
+                        if final_plate_info:
+                            final_plate_text = final_plate_info['text']
+                            final_confidence = final_plate_info['confidence']
+
+                            clean_text = final_plate_text.replace(' ', '').replace('\n', '')
+                            if self.license_format == 'format1':
+                                expected_lengths = {7}
+                            elif self.license_format == 'format2':
+                                expected_lengths = {6}
+                            else:
+                                expected_lengths = {6, 7}
+
+                            if len(clean_text) in expected_lengths and final_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD:
                                 plate_info = {
                                     'text': final_plate_text,
                                     'confidence': final_confidence,
                                     'bbox': [abs_px1, abs_py1, abs_px2, abs_py2],
                                     'timestamp': datetime.now()
                                 }
-                                
-                                # Add to detected plates list
+
                                 self.detected_plates.append(plate_info)
-                                
-                                # Add to results table
                                 self.add_detection_to_table(continuous_id, final_plate_text, final_confidence, plate_img)
-                                
-                                # Mark vehicle as having readable plate
                                 vehicles_with_plates.add(continuous_id)
-                                
-                                # Display plate text on image
-                                if not self.hide_bboxes:
-                                    cv2.putText(show_img, f'{final_plate_text} ({final_confidence:.2f})', 
-                                               (abs_px1, abs_py1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            
-            # Draw vehicle bounding box if it has readable plate
-            if continuous_id in vehicles_with_plates and not self.hide_bboxes:
-                cv2.rectangle(show_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                if continuous_id in self.vehicle_final_plates:
-                    plate_text = self.vehicle_final_plates[continuous_id]['text']
-                    cv2.putText(show_img, f'Vehicle {continuous_id}: {plate_text}', (int(x1), int(y1)-10), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        # Cache detections for smooth playback
-        self.cached_detections = []
-        for vehicle in tracked_vehicles:
-            x1, y1, x2, y2, sort_id = vehicle
-            sort_id = int(sort_id)
-            continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
-            self.cached_detections.append([x1, y1, x2, y2, continuous_id, 'Vehicle'])
-        
-        # Update counters
-        self.total_tracked = len(self.vehicle_id_map)
-        self.unique_plates_detected = len(self.plate_ownership)
-        
-        # Update UI counters and cards
-        self.update_vehicle_counter()
-        self.update_dashboard_cards()
-        
-        # Display processed frame
-        if preview:
-            self.show_plain_frame(show_img)
+
+                                if (show_img is not None) and (not self.hide_bboxes):
+                                    cv2.putText(show_img, f"{final_plate_text} ({final_confidence:.2f})",
+                                                (abs_px1, max(0, abs_py1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                except Exception:
+                    continue
+
+            # Draw vehicle bounding boxes for vehicles with finalized plates
+            if (show_img is not None) and (not self.hide_bboxes):
+                for item in tracks:
+                    try:
+                        x1, y1, x2, y2, sort_id = item
+                        sort_id = int(sort_id)
+                        continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
+                        if continuous_id in vehicles_with_plates:
+                            cv2.rectangle(show_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                            if continuous_id in self.vehicle_final_plates:
+                                plate_text = self.vehicle_final_plates[continuous_id]['text']
+                                cv2.putText(show_img, f"Vehicle {continuous_id}: {plate_text}",
+                                            (int(x1), max(0, int(y1)-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    except Exception:
+                        continue
+
+            # Cache detections for smooth playback
+            self.cached_detections = []
+            for item in tracks:
+                try:
+                    x1, y1, x2, y2, sort_id = item
+                    sort_id = int(sort_id)
+                    continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
+                    self.cached_detections.append([x1, y1, x2, y2, continuous_id, 'Vehicle'])
+                except Exception:
+                    continue
+
+            # Update counters and dashboard
+            self.total_tracked = len(self.vehicle_id_map)
+            self.unique_plates_detected = len(self.plate_ownership)
+            self.update_vehicle_counter()
+            self.update_dashboard_cards()
+
+            # Show processed frame if requested
+            if preview and (show_img is not None):
+                self.show_plain_frame(show_img)
+        except Exception as e:
+            print(f"on_worker_frame_processed error: {e}")
+
+    def on_worker_error(self, msg: str):
+        try:
+            print(msg)
+        except Exception:
+            pass
     
     def add_plate_candidate(self, vehicle_id, plate_text, confidence):
         """Add plate candidate for vehicle"""
@@ -312,6 +320,16 @@ class ANPRApplication(PlateDetectorDashboard):
         self.vehicle_counter_label.setText(
             f"Vehicles with Readable Plates: {finalized_count} | Total Tracked: {total_tracked} | Unique Plates: {unique_plates}"
         )
+
+    def closeEvent(self, event):
+        """Ensure background worker is stopped before base cleanup."""
+        try:
+            if hasattr(self, 'worker_thread') and self.worker_thread is not None:
+                self.worker_thread.quit()
+                self.worker_thread.wait(5000)
+        except Exception as e:
+            print(f"Worker thread shutdown error: {e}")
+        super().closeEvent(event)
 
 def main():
     """Main application entry point"""

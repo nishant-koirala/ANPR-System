@@ -36,6 +36,12 @@ MAX_FRAME_HEIGHT = 720             # Maximum height for processing (maintains as
 TRACKER_MAX_AGE = 50               # Number of frames to keep a tracker alive without detection
 TRACKER_MIN_HITS = 1               # Minimum number of detections before a track is confirmed
 TRACKER_IOU_THRESHOLD = 0.4        # IOU threshold for tracking
+TRACKER_TYPE = 'SORT'              # Default tracker: 'SORT', 'DEEPSORT', or 'BYTETRACK'
+
+# ByteTrack specific defaults
+BYTETRACK_TRACK_THRESH = 0.25
+BYTETRACK_MATCH_THRESH = 0.8
+BYTETRACK_TRACK_BUFFER = 30
 MIN_DETECTIONS_FOR_FINAL = 3       # Minimum number of detections before considering a plate as final
 CONFIDENCE_THRESHOLD_FINAL = 0.7   # Minimum confidence threshold to consider a plate as final
 
