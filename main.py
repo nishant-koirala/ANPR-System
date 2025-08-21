@@ -6,6 +6,9 @@ Main application entry point
 
 import sys
 import os
+# Set the environment variable for Ultralytics to use the models/ directory
+os.environ['ULTRALYTICS_HOME'] = os.path.join(os.path.dirname(__file__), 'models')
+
 import cv2
 import numpy as np
 from datetime import datetime
@@ -15,7 +18,7 @@ from collections import defaultdict
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 sys.path.append(os.path.dirname(__file__))
 
-from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QLabel
+from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QLabel, QMessageBox
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from src.ui.main_window import PlateDetectorDashboard
@@ -28,6 +31,10 @@ class ANPRApplication(PlateDetectorDashboard):
 
     # Signal to request background processing of a frame
     frameRequested = pyqtSignal(object, int, bool, str, bool)
+    # Signal to request graceful stop of background worker
+    stopRequested = pyqtSignal()
+    # Signal to request vehicle model reload in worker
+    reloadRequested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -41,9 +48,18 @@ class ANPRApplication(PlateDetectorDashboard):
         self.frameRequested.connect(self.worker.process_frame)
         self.worker.sig_frameProcessed.connect(self.on_worker_frame_processed)
         self.worker.sig_error.connect(self.on_worker_error)
+        # Model reload wiring
+        self.reloadRequested.connect(self.worker.reload_vehicle_model)
+        self.worker.sig_reloadProgress.connect(self.on_worker_reload_progress)
+        self.worker.sig_reloadFinished.connect(self.on_worker_reload_finished)
         # Connect tracker type change from UI to worker slot for runtime switching
         try:
             self.trackerTypeChanged.connect(self.worker.set_tracker_type)
+        except Exception:
+            pass
+        # Stop request signal to ensure stop() runs in worker thread
+        try:
+            self.stopRequested.connect(self.worker.stop)
         except Exception:
             pass
 
@@ -168,14 +184,18 @@ class ANPRApplication(PlateDetectorDashboard):
                     except Exception:
                         continue
 
-            # Cache detections for smooth playback
+            # Cache ALL vehicle detections for smooth playback (not just finalized ones)
             self.cached_detections = []
             for item in tracks:
                 try:
                     x1, y1, x2, y2, sort_id = item
                     sort_id = int(sort_id)
                     continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
-                    self.cached_detections.append([x1, y1, x2, y2, continuous_id, 'Vehicle'])
+                    # Show all tracked vehicles, highlight finalized ones differently
+                    label = f'Vehicle {continuous_id}'
+                    if continuous_id in vehicles_with_plates and continuous_id in self.vehicle_final_plates:
+                        label += f': {self.vehicle_final_plates[continuous_id]["text"]}'
+                    self.cached_detections.append([x1, y1, x2, y2, continuous_id, label])
                 except Exception:
                     continue
 
@@ -194,6 +214,28 @@ class ANPRApplication(PlateDetectorDashboard):
     def on_worker_error(self, msg: str):
         try:
             print(msg)
+        except Exception:
+            pass
+    
+    def on_worker_reload_progress(self, msg: str):
+        """Update model reload progress dialog from worker messages."""
+        try:
+            if hasattr(self, 'model_progress_dialog') and self.model_progress_dialog is not None:
+                self.model_progress_dialog.setLabelText(str(msg))
+                QApplication.processEvents()
+        except Exception:
+            pass
+
+    def on_worker_reload_finished(self, success: bool, message: str):
+        """Handle completion of background model reload."""
+        try:
+            if hasattr(self, 'model_progress_dialog') and self.model_progress_dialog is not None:
+                self.model_progress_dialog.close()
+                self.model_progress_dialog = None
+            if success:
+                QMessageBox.information(self, "Settings Saved", "Settings have been saved and model loaded successfully!")
+            else:
+                QMessageBox.warning(self, "Model Loading Error", str(message))
         except Exception:
             pass
     
@@ -324,6 +366,12 @@ class ANPRApplication(PlateDetectorDashboard):
     def closeEvent(self, event):
         """Ensure background worker is stopped before base cleanup."""
         try:
+            # Request graceful stop of pipeline threads in the worker
+            try:
+                if hasattr(self, 'stopRequested'):
+                    self.stopRequested.emit()
+            except Exception:
+                pass
             if hasattr(self, 'worker_thread') and self.worker_thread is not None:
                 self.worker_thread.quit()
                 self.worker_thread.wait(5000)

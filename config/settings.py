@@ -3,6 +3,7 @@
 # ===== Model Configuration =====
 # Model paths
 PLATE_MODEL_PATH = "models/best.pt"
+VEHICLE_MODEL_TYPE = "yolov8m"  # Available: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x
 VEHICLE_MODEL_PATH = "yolov8m.pt"
 
 # Model inference settings

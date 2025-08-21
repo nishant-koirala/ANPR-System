@@ -5,6 +5,9 @@ from datetime import datetime
 from types import SimpleNamespace
 import os
 import sys
+import threading
+import time
+from queue import Queue, Empty, Full
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
@@ -24,6 +27,8 @@ class FrameWorker(QObject):
 
     sig_frameProcessed = pyqtSignal(object)  # dict payload
     sig_error = pyqtSignal(str)
+    sig_reloadProgress = pyqtSignal(str)
+    sig_reloadFinished = pyqtSignal(bool, str)
 
     def __init__(self):
         super().__init__()
@@ -36,7 +41,8 @@ class FrameWorker(QObject):
                 self.device = 'cpu'
 
             # Initialize models locally in the worker to avoid cross-thread access
-            self.vehicle_detector = VehicleDetector(self.device)
+            model_path = getattr(settings, 'VEHICLE_MODEL_PATH', 'yolov8m.pt')
+            self.vehicle_detector = VehicleDetector(self.device, model_path)
             self.plate_detector = PlateDetector(self.device)
             self.plate_reader = PlateReader()
 
@@ -46,6 +52,17 @@ class FrameWorker(QObject):
 
             # For optional OCR debug saving
             self.debug_dir = None
+            qsize = int(getattr(settings, 'QUEUE_SIZE', 32))
+            self.q_frames: Queue = Queue(maxsize=qsize)
+            self.q_ocr: Queue = Queue(maxsize=max(1, qsize * 2))
+
+            # Thread controls
+            self._stop_event = threading.Event()
+            self.ocr_worker_count = 1  # keep 1 to avoid thread-unsafe OCR and GPU contention
+            self._threads = []
+
+            # Start staged pipeline threads
+            self._start_pipeline_threads()
         except Exception as e:
             self.sig_error.emit(f"Worker init error: {e}")
 
@@ -141,6 +158,22 @@ class FrameWorker(QObject):
             except Exception:
                 self.tracker = None
             self.sig_error.emit(f"Tracker init error: {e}")
+
+    def _start_pipeline_threads(self):
+        """Start GPU and OCR worker threads for the staged pipeline."""
+        try:
+            # GPU stage: vehicle detect + track + plate detect, dispatch OCR tasks
+            t_gpu = threading.Thread(target=self._gpu_worker_loop, name="GPUStage", daemon=True)
+            t_gpu.start()
+            self._threads.append(t_gpu)
+
+            # OCR stage: one worker to avoid thread-unsafe OCR/GPU conflicts
+            for i in range(self.ocr_worker_count):
+                t = threading.Thread(target=self._ocr_worker_loop, args=(i,), name=f"OCRWorker-{i}", daemon=True)
+                t.start()
+                self._threads.append(t)
+        except Exception as e:
+            self.sig_error.emit(f"Failed to start pipeline threads: {e}")
 
     def _update_tracker(self, detections, frame=None):
         """Return numpy array [[x1,y1,x2,y2,track_id], ...]."""
@@ -261,88 +294,275 @@ class FrameWorker(QObject):
             self._init_tracker()
         except Exception as e:
             self.sig_error.emit(f"set_tracker_type error: {e}")
+    
+    @pyqtSlot(str)
+    def reload_vehicle_model(self, model_path: str):
+        """Reload vehicle detection model at runtime."""
+        try:
+            self.sig_reloadProgress.emit(f"Worker: Reloading vehicle model to {model_path}")
+
+            def progress_cb(message: str):
+                try:
+                    self.sig_reloadProgress.emit(str(message))
+                except Exception:
+                    pass
+
+            self.vehicle_detector.reload_model(model_path, self.device, progress_cb)
+            self.sig_reloadProgress.emit("Worker: Successfully reloaded vehicle model")
+            self.sig_reloadFinished.emit(True, "Model reloaded")
+        except Exception as e:
+            error_msg = f"Worker: Failed to reload vehicle model: {e}"
+            try:
+                self.sig_reloadProgress.emit(error_msg)
+            except Exception:
+                pass
+            self.sig_error.emit(error_msg)
+            try:
+                self.sig_reloadFinished.emit(False, error_msg)
+            except Exception:
+                pass
 
     @pyqtSlot(object, int, bool, str, bool)
     def process_frame(self, frame: np.ndarray, frame_counter: int, hide_bboxes: bool, license_format: str, preview: bool):
-        """Process a frame and emit aggregated results to the UI thread.
+        """Enqueue a frame into the staged pipeline.
 
-        Parameters map to current UI state to keep behavior unchanged.
+        The GPU stage will emit a quick tracks update. OCR results will arrive asynchronously.
+        For preview=True (single image), OCR is performed synchronously and a single combined
+        result is emitted to preserve prior behavior.
         """
         try:
             if frame is None or (hasattr(frame, 'size') and frame.size == 0):
                 return
-
-            original_img = frame
-            show_img = original_img.copy()
-
-            # Plate reader debug naming
-            try:
-                if hasattr(self.plate_reader, 'set_frame_counter'):
-                    self.plate_reader.set_frame_counter(frame_counter)
-            except Exception:
-                pass
-
-            # 1) Vehicle detection
-            vehicle_detections = self.vehicle_detector.detect_vehicles(original_img)
-
-            # 2) Tracking
-            tracked_vehicles = self._update_tracker(vehicle_detections, frame=original_img)
-
-            # 3) Plate detection + OCR per tracked vehicle
-            plates_payload = []
-            for vehicle in tracked_vehicles:
-                try:
-                    x1, y1, x2, y2, sort_id = vehicle
-                    sort_id = int(sort_id)
-                    roi = original_img[int(y1):int(y2), int(x1):int(x2)]
-                    if roi.size == 0:
-                        continue
-
-                    plate_detections = self.plate_detector.detect_plates_in_roi(roi)
-
-                    for plate_det in plate_detections:
-                        px1, py1, px2, py2, conf = plate_det
-                        abs_px1 = int(x1 + px1)
-                        abs_py1 = int(y1 + py1)
-                        abs_px2 = int(x1 + px2)
-                        abs_py2 = int(y1 + py2)
-
-                        # Extract plate image
-                        plate_img = original_img[abs_py1:abs_py2, abs_px1:abs_px2]
-                        if plate_img is None or plate_img.size == 0:
-                            continue
-
-                        # Draw plate bbox (as before)
-                        if not hide_bboxes:
-                            cv2.rectangle(show_img, (abs_px1, abs_py1), (abs_px2, abs_py2), (0, 0, 255), 2)
-
-                        # OCR
-                        plate_text, ocr_confidence = self.plate_reader.extract_plate_text(plate_img, license_format)
-
-                        # Collect for UI to finalize and update widgets
-                        plates_payload.append({
-                            'sort_id': sort_id,
-                            'abs_bbox': [abs_px1, abs_py1, abs_px2, abs_py2],
-                            'plate_img': plate_img,
-                            'text': plate_text,
-                            'confidence': float(ocr_confidence) if ocr_confidence is not None else None
-                        })
-                except Exception:
-                    # Keep robust to per-vehicle errors
-                    continue
-
-            # Aggregate and emit result
-            result = {
-                'frame': show_img,
-                'tracks': tracked_vehicles.tolist() if hasattr(tracked_vehicles, 'tolist') else [],
-                'plates': plates_payload,
-                'preview': bool(preview),
+            # Best-effort enqueue without blocking UI
+            item = {
+                'frame': frame,
                 'frame_counter': int(frame_counter),
+                'hide_bboxes': bool(hide_bboxes),
+                'license_format': str(license_format),
+                'preview': bool(preview),
             }
-            self.sig_frameProcessed.emit(result)
+            try:
+                self.q_frames.put_nowait(item)
+            except Full:
+                # Drop if queue is full to keep realtime performance
+                if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                    self.sig_error.emit("DEBUG WORKER: q_frames full -> dropping frame")
         except Exception as e:
             try:
                 tb = traceback.format_exc()
             except Exception:
                 tb = ''
-            self.sig_error.emit(f"Worker process_frame error: {e}\n{tb}")
+            self.sig_error.emit(f"Worker enqueue error: {e}\n{tb}")
+
+    def _gpu_worker_loop(self):
+        """GPU stage: vehicle detection + tracking + plate detection.
+
+        Emits tracks early for responsiveness. Dispatches OCR tasks to OCR queue.
+        For preview images, performs OCR synchronously and emits a combined result.
+        """
+        while not self._stop_event.is_set():
+            try:
+                try:
+                    item = self.q_frames.get(timeout=0.1)
+                except Empty:
+                    continue
+                if item is None:
+                    break
+
+                frame = item['frame']
+                frame_counter = item['frame_counter']
+                hide_bboxes = item['hide_bboxes']
+                license_format = item['license_format']
+                preview = item['preview']
+
+                original_img = frame
+                show_img = original_img.copy() if preview else None
+
+                # For debug image naming sequence
+                try:
+                    if hasattr(self.plate_reader, 'set_frame_counter'):
+                        self.plate_reader.set_frame_counter(frame_counter)
+                except Exception:
+                    pass
+
+                # 1) Vehicle detection
+                vehicle_detections = self.vehicle_detector.detect_vehicles(original_img)
+
+                # 2) Tracking
+                tracked_vehicles = self._update_tracker(vehicle_detections, frame=original_img)
+
+                # Fast path: emit tracks now for UI mapping/caching during video
+                if not preview:
+                    try:
+                        tracks_payload = tracked_vehicles.tolist() if hasattr(tracked_vehicles, 'tolist') else []
+                        self.sig_frameProcessed.emit({
+                            'frame': None,
+                            'tracks': tracks_payload,
+                            'plates': [],
+                            'preview': False,
+                            'frame_counter': int(frame_counter),
+                        })
+                    except Exception:
+                        pass
+
+                # 3) Plate detection per tracked vehicle
+                if tracked_vehicles is None or len(tracked_vehicles) == 0:
+                    # Nothing more to do
+                    if preview:
+                        self.sig_frameProcessed.emit({
+                            'frame': show_img,
+                            'tracks': tracked_vehicles.tolist() if hasattr(tracked_vehicles, 'tolist') else [],
+                            'plates': [],
+                            'preview': True,
+                            'frame_counter': int(frame_counter),
+                        })
+                    continue
+
+                if preview:
+                    # Synchronous OCR path for single-image preview
+                    plates_payload = []
+                    for vehicle in tracked_vehicles:
+                        try:
+                            x1, y1, x2, y2, sort_id = vehicle
+                            sort_id = int(sort_id)
+                            roi = original_img[int(y1):int(y2), int(x1):int(x2)]
+                            if roi is None or roi.size == 0:
+                                continue
+                            plate_detections = self.plate_detector.detect_plates_in_roi(roi)
+                            for plate_det in plate_detections:
+                                px1, py1, px2, py2, _ = plate_det
+                                abs_px1 = int(x1 + px1)
+                                abs_py1 = int(y1 + py1)
+                                abs_px2 = int(x1 + px2)
+                                abs_py2 = int(y1 + py2)
+                                plate_img = original_img[abs_py1:abs_py2, abs_px1:abs_px2]
+                                if plate_img is None or plate_img.size == 0:
+                                    continue
+                                if not hide_bboxes and show_img is not None:
+                                    cv2.rectangle(show_img, (abs_px1, abs_py1), (abs_px2, abs_py2), (0, 0, 255), 2)
+                                # OCR inline for preview
+                                plate_text, ocr_conf = self.plate_reader.extract_plate_text(plate_img, license_format)
+                                plates_payload.append({
+                                    'sort_id': sort_id,
+                                    'abs_bbox': [abs_px1, abs_py1, abs_px2, abs_py2],
+                                    'plate_img': plate_img,
+                                    'text': plate_text,
+                                    'confidence': float(ocr_conf) if ocr_conf is not None else None
+                                })
+                        except Exception:
+                            continue
+                    # Emit combined preview result
+                    self.sig_frameProcessed.emit({
+                        'frame': show_img,
+                        'tracks': tracked_vehicles.tolist() if hasattr(tracked_vehicles, 'tolist') else [],
+                        'plates': plates_payload,
+                        'preview': True,
+                        'frame_counter': int(frame_counter),
+                    })
+                    continue
+
+                # Video path: dispatch OCR tasks asynchronously
+                for vehicle in tracked_vehicles:
+                    try:
+                        x1, y1, x2, y2, sort_id = vehicle
+                        sort_id = int(sort_id)
+                        roi = original_img[int(y1):int(y2), int(x1):int(x2)]
+                        if roi is None or roi.size == 0:
+                            continue
+                        plate_detections = self.plate_detector.detect_plates_in_roi(roi)
+                        for plate_det in plate_detections:
+                            px1, py1, px2, py2, _ = plate_det
+                            abs_px1 = int(x1 + px1)
+                            abs_py1 = int(y1 + py1)
+                            abs_px2 = int(x1 + px2)
+                            abs_py2 = int(y1 + py2)
+                            plate_img = original_img[abs_py1:abs_py2, abs_px1:abs_px2]
+                            if plate_img is None or plate_img.size == 0:
+                                continue
+                            task = {
+                                'sort_id': sort_id,
+                                'abs_bbox': [abs_px1, abs_py1, abs_px2, abs_py2],
+                                'plate_img': plate_img,
+                                'license_format': license_format,
+                                'frame_counter': int(frame_counter),
+                            }
+                            try:
+                                self.q_ocr.put_nowait(task)
+                            except Full:
+                                if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                                    self.sig_error.emit("DEBUG WORKER: q_ocr full -> dropping plate task")
+                    except Exception:
+                        continue
+            except Exception as e:
+                try:
+                    tb = traceback.format_exc()
+                except Exception:
+                    tb = ''
+                self.sig_error.emit(f"GPU worker error: {e}\n{tb}")
+
+    def _ocr_worker_loop(self, worker_id: int):
+        """OCR worker: recognizes text from plate crops and emits results."""
+        while not self._stop_event.is_set():
+            try:
+                try:
+                    task = self.q_ocr.get(timeout=0.1)
+                except Empty:
+                    continue
+                if task is None:
+                    break
+                sort_id = int(task['sort_id'])
+                abs_bbox = task['abs_bbox']
+                plate_img = task['plate_img']
+                license_format = task['license_format']
+                frame_counter = int(task['frame_counter'])
+
+                text, conf = self.plate_reader.extract_plate_text(plate_img, license_format)
+                payload = {
+                    'frame': None,
+                    'tracks': [],
+                    'plates': [{
+                        'sort_id': sort_id,
+                        'abs_bbox': abs_bbox,
+                        'plate_img': plate_img,
+                        'text': text,
+                        'confidence': float(conf) if conf is not None else None,
+                    }],
+                    'preview': False,
+                    'frame_counter': frame_counter,
+                }
+                self.sig_frameProcessed.emit(payload)
+            except Exception as e:
+                try:
+                    tb = traceback.format_exc()
+                except Exception:
+                    tb = ''
+                self.sig_error.emit(f"OCR worker error: {e}\n{tb}")
+
+    @pyqtSlot()
+    def stop(self):
+        """Stop pipeline threads and restore settings where applicable."""
+        try:
+            self._stop_event.set()
+            # Send sentinels
+            try:
+                self.q_frames.put_nowait(None)
+            except Exception:
+                pass
+            try:
+                for _ in range(max(1, self.ocr_worker_count)):
+                    self.q_ocr.put_nowait(None)
+            except Exception:
+                pass
+            # Join threads
+            for t in self._threads:
+                try:
+                    t.join(timeout=1.0)
+                except Exception:
+                    pass
+        finally:
+            # Restore OCR GPU flag if it was changed
+            try:
+                if hasattr(self, '_orig_ocr_gpu'):
+                    settings.OCR_GPU_ENABLED = self._orig_ocr_gpu
+            except Exception:
+                pass

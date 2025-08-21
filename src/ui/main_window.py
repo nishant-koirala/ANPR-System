@@ -180,6 +180,29 @@ class PlateDetectorDashboard(QWidget):
         group.setLayout(layout)
         parent_layout.addWidget(group)
     
+    def create_model_settings(self, parent_layout):
+        """Create model selection settings group"""
+        group = QGroupBox("Model Settings")
+        layout = QGridLayout()
+        
+        # Vehicle Model Selection
+        layout.addWidget(QLabel("Vehicle Detection Model:"), 0, 0)
+        self.vehicle_model_combo = QComboBox()
+        self.vehicle_model_combo.addItems(["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"])
+        # Set current selection
+        current_model = self.current_settings.get('VEHICLE_MODEL_TYPE', 'yolov8m')
+        if current_model in ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"]:
+            self.vehicle_model_combo.setCurrentText(current_model)
+        layout.addWidget(self.vehicle_model_combo, 0, 1)
+        
+        # Model info label
+        model_info = QLabel("n=fastest, s=small, m=medium, l=large, x=extra large")
+        model_info.setStyleSheet("color: #666; font-size: 10px;")
+        layout.addWidget(model_info, 1, 0, 1, 2)
+        
+        group.setLayout(layout)
+        parent_layout.addWidget(group)
+    
     def create_ocr_settings(self, parent_layout):
         """Create OCR settings group"""
         group = QGroupBox("OCR Settings")
@@ -261,7 +284,10 @@ class PlateDetectorDashboard(QWidget):
     def save_settings(self):
         """Save settings to config module"""
         # Update current settings from UI
+        selected_model = self.vehicle_model_combo.currentText()
         self.current_settings.update({
+            'VEHICLE_MODEL_TYPE': selected_model,
+            'VEHICLE_MODEL_PATH': f"{selected_model}.pt",
             'VEHICLE_CONFIDENCE_THRESHOLD': self.vehicle_conf_spin.value(),
             'PLATE_CONFIDENCE_THRESHOLD': self.plate_conf_spin.value(),
             'OCR_CONFIDENCE_THRESHOLD': self.ocr_conf_spin.value(),
@@ -283,18 +309,97 @@ class PlateDetectorDashboard(QWidget):
             )
         })
         
+        # Check if model changed BEFORE updating settings
+        old_model_path = getattr(settings, 'VEHICLE_MODEL_PATH', None)
+        new_model_path = self.current_settings.get('VEHICLE_MODEL_PATH')
+        model_changed = old_model_path != new_model_path
+        
+        # If model changed, check if file exists
+        if model_changed:
+            models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'models')
+            model_file = f"{selected_model}.pt"
+            model_path = os.path.join(models_dir, model_file)
+            
+            if not os.path.exists(model_path):
+                # Ask for download confirmation
+                reply = QMessageBox.question(
+                    self, 
+                    "Model Not Found",
+                    f"The model '{model_file}' is not downloaded. Download now?",
+                    QMessageBox.Ok | QMessageBox.Cancel
+                )
+                
+                if reply == QMessageBox.Ok:
+                    from src.utils.downloader import download_model
+                    # Download model with progress dialog
+                    downloaded = download_model(model_file, models_dir, self)
+                    if not downloaded:
+                        # Download failed, revert selection
+                        self.vehicle_model_combo.setCurrentText(old_model_path.split('.')[0])
+                        return
+                else:
+                    # User canceled download, revert selection
+                    self.vehicle_model_combo.setCurrentText(old_model_path.split('.')[0])
+                    return
+        
         # Update config module
         for setting, value in self.current_settings.items():
             if hasattr(settings, setting):
                 setattr(settings, setting, value)
         
-        # Show confirmation
-        QMessageBox.information(self, "Settings Saved", "Settings have been saved successfully!")
-        
-        # Apply settings to running processes if needed
-        self.apply_runtime_settings()
+        # Show progress dialog for model loading
+        if model_changed:
+            from PyQt5.QtWidgets import QProgressDialog
+            # Create and store progress dialog for main handler updates
+            self.model_progress_dialog = QProgressDialog("Loading model...", "Cancel", 0, 0, self)
+            self.model_progress_dialog.setWindowTitle("Model Download")
+            self.model_progress_dialog.setModal(True)
+            self.model_progress_dialog.show()
+
+            print(f"DEBUG: Model changed from '{old_model_path}' to '{new_model_path}'")
+
+            # Apply other runtime settings (timer/GPU/tracker). Avoid blocking model reload on UI.
+            try:
+                self.apply_runtime_settings()
+            except Exception:
+                pass
+
+            # Request background reload via ANPRApplication signal if available
+            try:
+                if hasattr(self, 'reloadRequested'):
+                    self.reloadRequested.emit(new_model_path)
+                else:
+                    # Fallback: try local synchronous reload if available (not typical)
+                    try:
+                        update_progress = lambda m: (self.model_progress_dialog.setLabelText(str(m)), QApplication.processEvents())
+                        # If UI has a vehicle_detector (rare), reload it synchronously
+                        if hasattr(self, 'vehicle_detector'):
+                            self.vehicle_detector.reload_model(new_model_path, getattr(self, 'device', 'cpu'), update_progress)
+                        # Notify completion via dialog; final message boxes handled in main if signal existed
+                        if hasattr(self, 'model_progress_dialog') and self.model_progress_dialog is not None:
+                            self.model_progress_dialog.close()
+                            self.model_progress_dialog = None
+                            QMessageBox.information(self, "Settings Saved", "Settings have been saved and model loaded successfully!")
+                    except Exception as e:
+                        if hasattr(self, 'model_progress_dialog') and self.model_progress_dialog is not None:
+                            self.model_progress_dialog.close()
+                            self.model_progress_dialog = None
+                        QMessageBox.warning(self, "Model Loading Error", f"Settings saved but model loading failed: {e}")
+            except Exception as e:
+                # On unexpected error, ensure dialog is closed
+                try:
+                    if hasattr(self, 'model_progress_dialog') and self.model_progress_dialog is not None:
+                        self.model_progress_dialog.close()
+                        self.model_progress_dialog = None
+                except Exception:
+                    pass
+                QMessageBox.warning(self, "Model Loading Error", f"Failed to request background reload: {e}")
+        else:
+            # Apply settings to running processes if needed
+            self.apply_runtime_settings()
+            QMessageBox.information(self, "Settings Saved", "Settings have been saved successfully!")
     
-    def apply_runtime_settings(self):
+    def apply_runtime_settings(self, progress_callback=None):
         """Apply settings that can be changed at runtime"""
         # Update frame timer interval based on FPS
         if hasattr(self, 'timer') and self.timer.isActive():
@@ -308,6 +413,37 @@ class PlateDetectorDashboard(QWidget):
             else:
                 self.device = 'cpu'
             print(f"Device set to: {self.device}")
+
+        # Reinitialize models if vehicle model changed
+        if hasattr(self, 'vehicle_detector'):
+            try:
+                # Reload the model in the existing detector instead of creating new instance
+                self.vehicle_detector.reload_model(
+                    self.current_settings.get('VEHICLE_MODEL_PATH'), 
+                    self.device, 
+                    progress_callback
+                )
+                print(f"Reloaded vehicle detector with model: {self.current_settings.get('VEHICLE_MODEL_PATH')}")
+            except Exception as e:
+                print(f"Failed to reload vehicle detector: {e}")
+                # Fallback: create new detector
+                try:
+                    from src.detection.vehicle_detector import VehicleDetector
+                    if progress_callback:
+                        progress_callback("Creating new vehicle detector...")
+                    self.vehicle_detector = VehicleDetector(self.device, self.current_settings.get('VEHICLE_MODEL_PATH'))
+                except Exception as e2:
+                    print(f"Failed to create new vehicle detector: {e2}")
+                    raise e2
+
+        # Update worker thread model if changed
+        if hasattr(self, 'frame_worker'):
+            try:
+                if progress_callback:
+                    progress_callback("Updating worker thread model...")
+                self.frame_worker.reload_vehicle_model(self.current_settings.get('VEHICLE_MODEL_PATH'))
+            except Exception as e:
+                print(f"Failed to update worker model: {e}")
 
         # Reinitialize tracker if type changed
         if self.tracker_type != self.current_settings.get('TRACKER_TYPE', self.tracker_type):
@@ -422,6 +558,21 @@ class PlateDetectorDashboard(QWidget):
         self.step_back_btn.clicked.connect(lambda: self.step_frame(-1))
         self.step_fwd_btn = QPushButton("⏭ Frame+")
         self.step_fwd_btn.clicked.connect(lambda: self.step_frame(1))
+        # Defensive: ensure step buttons do not auto-repeat on press-and-hold
+        try:
+            self.step_back_btn.setAutoRepeat(False)
+            self.step_fwd_btn.setAutoRepeat(False)
+            # Avoid accidental activation via Enter key focus defaults
+            self.step_back_btn.setAutoDefault(False)
+            self.step_fwd_btn.setAutoDefault(False)
+        except Exception:
+            pass
+        # Prevent keyboard focus from causing repeated activations
+        try:
+            self.step_back_btn.setFocusPolicy(Qt.NoFocus)
+            self.step_fwd_btn.setFocusPolicy(Qt.NoFocus)
+        except Exception:
+            pass
 
         controls_layout.addWidget(self.play_btn)
         controls_layout.addWidget(self.stop_btn)
@@ -575,6 +726,7 @@ class PlateDetectorDashboard(QWidget):
         layout.addWidget(track_group)
 
         # Add comprehensive settings groups
+        self.create_model_settings(layout)
         self.create_detection_settings(layout)
         self.create_ocr_settings(layout)
         self.create_performance_settings(layout)
@@ -949,7 +1101,33 @@ class PlateDetectorDashboard(QWidget):
         # Display current frame once using latest cached overlay to avoid flicker
         self.show_frame_with_cached_detections(frame)
 
-        # Queue background processing at interval (do not immediately redraw processed frame)
+        # Run lightweight detection every frame for immediate bounding boxes
+        if hasattr(self, 'vehicle_detector'):
+            try:
+                # Quick vehicle detection for immediate display
+                vehicle_detections = self.vehicle_detector.detect_vehicles(frame)
+                if len(vehicle_detections) > 0:
+                    # Update tracker with new detections
+                    tracked_vehicles = self.update_tracker(vehicle_detections, frame)
+                    # Update cached detections immediately
+                    self.cached_detections = []
+                    for item in tracked_vehicles:
+                        try:
+                            x1, y1, x2, y2, sort_id = item
+                            sort_id = int(sort_id)
+                            continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
+                            label = f'Vehicle {continuous_id}'
+                            # Check if we have finalized plate for this vehicle
+                            if hasattr(self, 'vehicle_final_plates') and continuous_id in self.vehicle_final_plates:
+                                label += f': {self.vehicle_final_plates[continuous_id]["text"]}'
+                            self.cached_detections.append([x1, y1, x2, y2, continuous_id, label])
+                        except Exception:
+                            continue
+            except Exception as e:
+                if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                    print(f"Quick detection error: {e}")
+        
+        # Queue full processing (OCR) at interval
         if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
             self.process_frame(frame, preview=False)
 
@@ -972,9 +1150,11 @@ class PlateDetectorDashboard(QWidget):
         if not self.hide_bboxes and hasattr(self, 'cached_detections'):
             for detection in self.cached_detections:
                 x1, y1, x2, y2, track_id, label = detection
-                cv2.rectangle(show_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                cv2.putText(show_img, f'{label} {track_id}', (int(x1), int(y1-10)), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                # Use different colors: blue for tracking, green for finalized plates
+                color = (0, 255, 0) if ':' in label else (255, 0, 0)  # Green if has plate, blue if tracking only
+                cv2.rectangle(show_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                cv2.putText(show_img, label, (int(x1), max(10, int(y1-10))), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         self.show_plain_frame(show_img)
 
@@ -1006,7 +1186,15 @@ class PlateDetectorDashboard(QWidget):
         if self.playing and self.base_interval_ms is not None:
             self.timer.stop()
             interval_ms = int(self.base_interval_ms / max(self.playback_speed, 0.01))
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print(f"DEBUG UI: on_speed_changed -> restart timer, interval_ms={interval_ms}, speed={self.playback_speed}")
             self.timer.start(interval_ms)
+        else:
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                try:
+                    print(f"DEBUG UI: on_speed_changed -> ignored (playing={self.playing}, base_interval_ms={self.base_interval_ms})")
+                except Exception:
+                    print("DEBUG UI: on_speed_changed -> ignored")
 
     def on_slider_pressed(self):
         self.seeking = True
@@ -1109,6 +1297,22 @@ class PlateDetectorDashboard(QWidget):
             else:
                 self.seek_to_frame(target)
         finally:
+            # Enforce paused state and ensure timer stays stopped after stepping
+            try:
+                if hasattr(self, 'timer') and self.timer.isActive():
+                    self.timer.stop()
+            except Exception:
+                pass
+            self.playing = False
+            try:
+                self.play_btn.setText("▶ Play")
+            except Exception:
+                pass
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                try:
+                    print("DEBUG UI: step_frame -> finalize: playing=False, timer stopped")
+                except Exception:
+                    pass
             self.stepping_in_progress = False
 
     def update_progress_ui(self, force_index=None):
