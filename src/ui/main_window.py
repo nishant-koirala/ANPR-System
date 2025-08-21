@@ -70,6 +70,11 @@ class PlateDetectorDashboard(QWidget):
     def setup_ui_state(self):
         """Initialize UI state variables"""
         self.timer = QTimer()
+        try:
+            # Use a precise timer to avoid coalesced ticks affecting stepping behavior
+            self.timer.setTimerType(Qt.PreciseTimer)
+        except Exception:
+            pass
         self.video_path = None
         self.cap = None
         self.playing = False
@@ -82,6 +87,7 @@ class PlateDetectorDashboard(QWidget):
         self.total_frames = 0
         self.base_interval_ms = None
         self.suppress_slider_update = False
+        self.stepping_in_progress = False
         
         # Settings
         self.license_format = 'auto'
@@ -669,17 +675,36 @@ class PlateDetectorDashboard(QWidget):
                     return
             elif str(local_tracker_type).upper() == 'BYTETRACK':
                 try:
+                    # Ensure local ByteTrack repo is importable (adds '<project>/ByteTrack' to sys.path)
+                    try:
+                        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                        bt_root = os.path.join(project_root, 'ByteTrack')
+                        if os.path.isdir(bt_root) and bt_root not in sys.path:
+                            sys.path.insert(0, bt_root)
+                        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                            print(f"DEBUG UI: ByteTrack bt_root={bt_root}, exists={os.path.isdir(bt_root)}")
+                            try:
+                                byte_file = os.path.join(bt_root, 'yolox', 'tracker', 'byte_tracker.py')
+                                print(f"DEBUG UI: ByteTrack byte_tracker.py exists={os.path.exists(byte_file)}")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    import_err1 = None
+                    import_err2 = None
                     try:
                         from yolox.tracker.byte_tracker import BYTETracker
-                    except Exception:
+                    except Exception as e:
+                        import_err1 = e
                         BYTETracker = None
                     if BYTETracker is None:
                         try:
                             from bytetrack.byte_tracker import BYTETracker
-                        except Exception:
+                        except Exception as e:
+                            import_err2 = e
                             BYTETracker = None
                     if BYTETracker is None:
-                        raise ImportError("BYTETracker not installed")
+                        raise ImportError(f"BYTETracker not installed. yolox err: {import_err1}; bytetrack err: {import_err2}")
 
                     from types import SimpleNamespace
                     bt_args = SimpleNamespace(
@@ -695,8 +720,12 @@ class PlateDetectorDashboard(QWidget):
                         self.tracker = BYTETracker(bt_args, fps)
                     print("Initialized tracker: ByteTrack")
                     return
-                except Exception:
-                    QMessageBox.warning(self, "ByteTrack Missing", "ByteTrack not installed. Falling back to SORT.")
+                except Exception as e:
+                    try:
+                        msg = f"ByteTrack not installed. Falling back to SORT. Details: {e}"
+                    except Exception:
+                        msg = "ByteTrack not installed. Falling back to SORT."
+                    QMessageBox.warning(self, "ByteTrack Missing", msg)
                     self.tracker_type = 'SORT'
                     settings.TRACKER_TYPE = 'SORT'
             # Default: SORT
@@ -861,6 +890,8 @@ class PlateDetectorDashboard(QWidget):
         if not self.cap:
             return
         if self.playing:
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print("DEBUG UI: toggle_video -> stop")
             self.timer.stop()
             self.play_btn.setText("▶ Play")
         else:
@@ -870,6 +901,8 @@ class PlateDetectorDashboard(QWidget):
                 self.video_fps = fps_guess if fps_guess and fps_guess > 0 else self.current_settings.get('VIDEO_FPS', settings.VIDEO_FPS)
                 self.base_interval_ms = int(1000 / max(self.video_fps, 1))
             interval_ms = int(self.base_interval_ms / max(self.playback_speed, 0.01))
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print(f"DEBUG UI: toggle_video -> start, interval_ms={interval_ms}, speed={self.playback_speed}, fps={self.video_fps}")
             self.timer.start(interval_ms)
             self.play_btn.setText("⏸ Pause")
         self.playing = not self.playing
@@ -878,8 +911,21 @@ class PlateDetectorDashboard(QWidget):
         """Read and process video frame"""
         if not self.cap:
             return
+        # Do not advance frames unless actively playing
+        if not self.playing:
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print("DEBUG UI: read_frame tick -> skipped (not playing)")
+            return
         # If user is actively seeking via slider, skip timer-driven reads to prevent clashes
-        if getattr(self, 'seeking', False):
+        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+            try:
+                pos = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            except Exception:
+                pos = -1
+            print(f"DEBUG UI: read_frame tick -> seeking={self.seeking}, stepping={getattr(self, 'stepping_in_progress', False)}, counter={self.frame_counter}, pos={pos}")
+        if getattr(self, 'seeking', False) or getattr(self, 'stepping_in_progress', False):
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print("DEBUG UI: read_frame skipped due to seeking/stepping")
             return
         ret, frame = self.cap.read()
         if not ret:
@@ -936,6 +982,8 @@ class PlateDetectorDashboard(QWidget):
         """Stop playback and reset to start"""
         if not self.cap:
             return
+        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+            print("DEBUG UI: stop_video -> stop and reset")
         self.timer.stop()
         self.playing = False
         self.play_btn.setText("▶ Play")
@@ -962,10 +1010,19 @@ class PlateDetectorDashboard(QWidget):
 
     def on_slider_pressed(self):
         self.seeking = True
+        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+            print("DEBUG UI: slider_pressed")
 
     def on_slider_released(self):
-        self.seeking = False
+        # Keep seeking flag True until seek completes to block timer-driven reads
+        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+            try:
+                val = self.progress_slider.value()
+            except Exception:
+                val = None
+            print(f"DEBUG UI: slider_released -> target={val}")
         self.seek_to_frame(self.progress_slider.value())
+        self.seeking = False
 
     def on_slider_moved(self, value):
         # live update time label while dragging
@@ -1003,43 +1060,56 @@ class PlateDetectorDashboard(QWidget):
     def step_frame(self, delta):
         if not self.cap or self.total_frames == 0:
             return
+        # Prevent re-entrant stepping
+        if getattr(self, 'stepping_in_progress', False):
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print("DEBUG UI: step_frame -> ignored (step already in progress)")
+            return
+        self.stepping_in_progress = True
         # Always stop timer before stepping to avoid unintended continuous playback
         try:
-            if hasattr(self, 'timer') and self.timer.isActive():
-                self.timer.stop()
-                self.playing = False
-                self.play_btn.setText("▶ Play")
-        except Exception:
-            pass
-        # Determine current index safely
-        try:
-            current_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
-        except Exception:
-            current_idx = 0
-        target = current_idx + delta
-        if getattr(settings, 'SHOW_DEBUG_INFO', False):
-            print(f"DEBUG UI: step_frame -> delta={delta}, current={current_idx}, target={target}, timer_active={self.timer.isActive() if hasattr(self,'timer') else None}")
-        # Fast path for +1 to avoid re-seek overhead and reduce backend quirks
-        if delta == 1:
-            ret, frame = self.cap.read()
-            if not ret:
-                # End of video behavior
-                if self.loop_enabled and self.total_frames > 0:
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = self.cap.read()
-                if not ret:
-                    return
-            self.frame_counter += 1
-            self.show_frame_with_cached_detections(frame)
-            if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
-                self.process_frame(frame, preview=False)
+            # Ensure UI reflects paused state immediately to block any queued ticks
+            self.playing = False
             try:
-                new_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+                self.play_btn.setText("▶ Play")
             except Exception:
-                new_idx = target
-            self.update_progress_ui(force_index=max(0, min(new_idx, self.total_frames - 1)))
-        else:
-            self.seek_to_frame(target)
+                pass
+            try:
+                if hasattr(self, 'timer') and self.timer.isActive():
+                    self.timer.stop()
+            except Exception:
+                pass
+            # Determine current index safely
+            try:
+                current_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            except Exception:
+                current_idx = 0
+            target = current_idx + delta
+            if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                print(f"DEBUG UI: step_frame -> delta={delta}, current={current_idx}, target={target}, timer_active={self.timer.isActive() if hasattr(self,'timer') else None}")
+            # Fast path for +1 to avoid re-seek overhead and reduce backend quirks
+            if delta == 1:
+                ret, frame = self.cap.read()
+                if not ret:
+                    # End of video behavior
+                    if self.loop_enabled and self.total_frames > 0:
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = self.cap.read()
+                    if not ret:
+                        return
+                self.frame_counter += 1
+                self.show_frame_with_cached_detections(frame)
+                if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
+                    self.process_frame(frame, preview=False)
+                try:
+                    new_idx = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+                except Exception:
+                    new_idx = target
+                self.update_progress_ui(force_index=max(0, min(new_idx, self.total_frames - 1)))
+            else:
+                self.seek_to_frame(target)
+        finally:
+            self.stepping_in_progress = False
 
     def update_progress_ui(self, force_index=None):
         if not self.cap or self.total_frames == 0:

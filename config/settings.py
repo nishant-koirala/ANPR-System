@@ -3,7 +3,7 @@
 # ===== Model Configuration =====
 # Model paths
 PLATE_MODEL_PATH = "models/best.pt"
-VEHICLE_MODEL_PATH = "models/yolov8n.pt"
+VEHICLE_MODEL_PATH = "yolov8m.pt"
 
 # Model inference settings
 MODEL_IMAGE_SIZE = 640  # YOLO model input image size

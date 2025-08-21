@@ -87,6 +87,7 @@ test_*.py
 debug_*.py
 best.pt
 yolov8n.pt
+yolov8m.pt
 
 # Project directories
 sort/

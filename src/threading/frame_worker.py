@@ -3,6 +3,8 @@ import numpy as np
 import traceback
 from datetime import datetime
 from types import SimpleNamespace
+import os
+import sys
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
@@ -74,17 +76,35 @@ class FrameWorker(QObject):
             elif self.tracker_type == 'BYTETRACK':
                 # Try to initialize ByteTrack from common sources
                 try:
+                    # Ensure local ByteTrack repo is importable (adds '<project>/ByteTrack' to sys.path)
+                    try:
+                        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                        bt_root = os.path.join(project_root, 'ByteTrack')
+                        if os.path.isdir(bt_root) and bt_root not in sys.path:
+                            sys.path.insert(0, bt_root)
+                        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                            try:
+                                byte_file = os.path.join(bt_root, 'yolox', 'tracker', 'byte_tracker.py')
+                                self.sig_error.emit(f"DEBUG WORKER: ByteTrack bt_root={bt_root}, exists={os.path.isdir(bt_root)}, byte_tracker.py exists={os.path.exists(byte_file)}")
+                            except Exception:
+                                self.sig_error.emit(f"DEBUG WORKER: ByteTrack bt_root={bt_root}, exists={os.path.isdir(bt_root)}")
+                    except Exception:
+                        pass
+                    import_err1 = None
+                    import_err2 = None
                     try:
                         from yolox.tracker.byte_tracker import BYTETracker  # YOLOX implementation
-                    except Exception:
+                    except Exception as e:
+                        import_err1 = e
                         BYTETracker = None
                     if BYTETracker is None:
                         try:
                             from bytetrack.byte_tracker import BYTETracker  # alternative package
-                        except Exception:
+                        except Exception as e:
+                            import_err2 = e
                             BYTETracker = None
                     if BYTETracker is None:
-                        raise ImportError("BYTETracker not found")
+                        raise ImportError(f"BYTETracker not found. yolox err: {import_err1}; bytetrack err: {import_err2}")
 
                     bt_args = SimpleNamespace(
                         track_thresh=getattr(settings, 'BYTETRACK_TRACK_THRESH', 0.25),
