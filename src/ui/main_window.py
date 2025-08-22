@@ -1097,39 +1097,16 @@ class PlateDetectorDashboard(QWidget):
                 return
 
         self.frame_counter += 1
+        
+        # Debug message showing frame counter
+        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+            print(f"FRAME COUNTER: {self.frame_counter}")
 
         # Display current frame once using latest cached overlay to avoid flicker
         self.show_frame_with_cached_detections(frame)
 
-        # Run lightweight detection every frame for immediate bounding boxes
-        if hasattr(self, 'vehicle_detector'):
-            try:
-                # Quick vehicle detection for immediate display
-                vehicle_detections = self.vehicle_detector.detect_vehicles(frame)
-                if len(vehicle_detections) > 0:
-                    # Update tracker with new detections
-                    tracked_vehicles = self.update_tracker(vehicle_detections, frame)
-                    # Update cached detections immediately
-                    self.cached_detections = []
-                    for item in tracked_vehicles:
-                        try:
-                            x1, y1, x2, y2, sort_id = item
-                            sort_id = int(sort_id)
-                            continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
-                            label = f'Vehicle {continuous_id}'
-                            # Check if we have finalized plate for this vehicle
-                            if hasattr(self, 'vehicle_final_plates') and continuous_id in self.vehicle_final_plates:
-                                label += f': {self.vehicle_final_plates[continuous_id]["text"]}'
-                            self.cached_detections.append([x1, y1, x2, y2, continuous_id, label])
-                        except Exception:
-                            continue
-            except Exception as e:
-                if getattr(settings, 'SHOW_DEBUG_INFO', False):
-                    print(f"Quick detection error: {e}")
-        
-        # Queue full processing (OCR) at interval
-        if self.frame_counter % settings.DEFAULT_DETECTION_INTERVAL == 0:
-            self.process_frame(frame, preview=False)
+        # Process frame through worker for real-time tracking
+        self.process_frame(frame, preview=False)
 
         # Update progress UI
         self.update_progress_ui()

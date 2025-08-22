@@ -7,7 +7,7 @@ VEHICLE_MODEL_TYPE = "yolov8m"  # Available: yolov8n, yolov8s, yolov8m, yolov8l,
 VEHICLE_MODEL_PATH = "yolov8m.pt"
 
 # Model inference settings
-MODEL_IMAGE_SIZE = 640  # YOLO model input image size
+MODEL_IMAGE_SIZE = 320  # YOLO model input image size (reduced for faster inference)
 MODEL_VERBOSE = False   # YOLO model verbose output
 
 # ===== Detection Settings =====
@@ -27,17 +27,17 @@ VEHICLE_CLASSES = {
 
 # ===== Video Processing Settings =====
 # Frame processing
-DEFAULT_FRAME_SKIP = 2             # Process every N frames to improve performance
-DEFAULT_DETECTION_INTERVAL = 2     # Run detection every N processed frames
+DEFAULT_FRAME_SKIP = 1             # Process every N frames to improve performance
+DEFAULT_DETECTION_INTERVAL = 1     # Run detection every N processed frames
 VIDEO_FPS = 30                     # Target frames per second for video processing
 MAX_FRAME_WIDTH = 1280             # Maximum width for processing (maintains aspect ratio)
 MAX_FRAME_HEIGHT = 720             # Maximum height for processing (maintains aspect ratio)
 
 # ===== Tracking Settings =====
-TRACKER_MAX_AGE = 50               # Number of frames to keep a tracker alive without detection
+TRACKER_MAX_AGE = 5                # Number of frames to keep a tracker alive without detection
 TRACKER_MIN_HITS = 1               # Minimum number of detections before a track is confirmed
-TRACKER_IOU_THRESHOLD = 0.4        # IOU threshold for tracking
-TRACKER_TYPE = 'SORT'              # Default tracker: 'SORT', 'DEEPSORT', or 'BYTETRACK'
+TRACKER_IOU_THRESHOLD = 0.2       # IOU threshold for tracking (lower for more sensitive matching)
+TRACKER_TYPE = 'BYTETRACK'         # Default tracker: 'SORT', 'DEEPSORT', or 'BYTETRACK'
 
 # ByteTrack specific defaults
 BYTETRACK_TRACK_THRESH = 0.25
