@@ -473,17 +473,34 @@ class PlateDetectorDashboard(QWidget):
         )
         self.sidebar.currentRowChanged.connect(self.on_sidebar_changed)
 
-        # Stack (Dashboard + Settings)
+        # Stack (Dashboard + Database + Settings)
         self.stack = QStackedWidget()
+        
         self.dashboard_page = self.build_dashboard_page()
+        self.database_page = self.build_database()
         self.settings_page = self.build_settings_page()
-
+        
         self.stack.addWidget(self.dashboard_page)
+        self.stack.addWidget(self.database_page)
         self.stack.addWidget(self.settings_page)
 
         main_layout.addWidget(self.sidebar)
         main_layout.addWidget(self.stack)
         self.setLayout(main_layout)
+
+    def build_database(self):
+        """Build database page"""
+        try:
+            from .database_page import DatabasePage
+            return DatabasePage()
+        except ImportError as e:
+            # Fallback if database page can't be imported
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"Database page unavailable: {e}")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return page
 
     def build_dashboard_page(self):
         """Build dashboard page"""
@@ -756,9 +773,13 @@ class PlateDetectorDashboard(QWidget):
 
     def on_sidebar_changed(self, index):
         """Handle sidebar navigation"""
-        if index == 3:  # Settings
+        if index == 0:  # Dashboard
+            self.stack.setCurrentIndex(0)
+        elif index == 1:  # Database
             self.stack.setCurrentIndex(1)
-        else:  # Dashboard
+        elif index == 3:  # Settings
+            self.stack.setCurrentIndex(2)
+        else:  # Default to Dashboard
             self.stack.setCurrentIndex(0)
 
     def apply_settings(self):

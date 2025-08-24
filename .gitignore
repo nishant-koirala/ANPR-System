@@ -86,6 +86,7 @@ models/*.pt
 test_*.py
 debug_*.py
 best.pt
+{{ ... }}
 yolov8n.pt
 yolov8m.pt
 yolov8l.pt
@@ -96,3 +97,43 @@ sort/
 automatic-number-plate-recognition-python-yolov8/
 deep_sort/
 ByteTrack/
+1.0.0
+8.0.0
+
+# Test files and directories
+tests/
+
+# Sample/demo video files
+Sample3.mp4
+sample*.mp4
+Sample*.mp4
+*.mp4
+
+# Database files (runtime generated)
+anpr_database.db
+anpr_database.db-*
+*.db
+*.db-*
+
+# Log files
+*.log
+logs/
+
+# Model files (large, can be downloaded)
+*.pt
+yolov8*.pt
+
+# Debug and validation files
+debug_*.py
+*_validation.py
+
+# Temporary/utility files
+python
+1.0.0
+8.0.0
+fix_database.py
+init_database.py
+check_database.py
+
+# Documentation (keep README.md)
+SYSTEM_DOCUMENTATION.txt

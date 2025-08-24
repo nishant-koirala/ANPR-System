@@ -7,7 +7,7 @@ VEHICLE_MODEL_TYPE = "yolov8m"  # Available: yolov8n, yolov8s, yolov8m, yolov8l,
 VEHICLE_MODEL_PATH = "yolov8m.pt"
 
 # Model inference settings
-MODEL_IMAGE_SIZE = 320  # YOLO model input image size (reduced for faster inference)
+MODEL_IMAGE_SIZE = 256  # YOLO model input image size (reduced for faster inference)
 MODEL_VERBOSE = False   # YOLO model verbose output
 
 # ===== Detection Settings =====
@@ -27,8 +27,8 @@ VEHICLE_CLASSES = {
 
 # ===== Video Processing Settings =====
 # Frame processing
-DEFAULT_FRAME_SKIP = 1             # Process every N frames to improve performance
-DEFAULT_DETECTION_INTERVAL = 1     # Run detection every N processed frames
+DEFAULT_FRAME_SKIP = 2             # Process every N frames to improve performance (increased from 1)
+DEFAULT_DETECTION_INTERVAL = 2     # Run detection every N processed frames (increased from 1)
 VIDEO_FPS = 30                     # Target frames per second for video processing
 MAX_FRAME_WIDTH = 1280             # Maximum width for processing (maintains aspect ratio)
 MAX_FRAME_HEIGHT = 720             # Maximum height for processing (maintains aspect ratio)
@@ -67,10 +67,10 @@ MORPHOLOGY_ITERATIONS = 1          # Number of iterations for morphological oper
 # ===== Performance Settings =====
 USE_GPU = True                     # Enable/disable GPU acceleration
 THREAD_COUNT = 4                   # Number of worker threads for parallel processing
-QUEUE_SIZE = 32                    # Maximum size of the processing queue
+QUEUE_SIZE = 8                     # Maximum size of the processing queue (reduced to prevent overflow)
 
 # ===== UI Settings =====
-SHOW_DEBUG_INFO = True             # Show debug information on the UI
+SHOW_DEBUG_INFO = False            # Show debug information on the UI (reduced verbosity)
 DRAW_DETECTIONS = True             # Draw detection bounding boxes
 DRAW_TRACKS = True                 # Draw tracking information
 DRAW_PLATE_TEXT = True             # Draw recognized plate text

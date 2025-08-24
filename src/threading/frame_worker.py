@@ -345,8 +345,8 @@ class FrameWorker(QObject):
                 self.q_frames.put_nowait(item)
             except Full:
                 # Drop if queue is full to keep realtime performance
-                if getattr(settings, 'SHOW_DEBUG_INFO', False):
-                    self.sig_error.emit("DEBUG WORKER: q_frames full -> dropping frame")
+                # Silently drop frames to reduce console spam
+                pass
         except Exception as e:
             try:
                 tb = traceback.format_exc()

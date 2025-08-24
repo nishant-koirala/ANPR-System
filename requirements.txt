@@ -1,13 +1,32 @@
+# Core ML and Computer Vision
 ultralytics>=8.0.0
 opencv-python>=4.5.0
-PyQt5>=5.15.0
-numpy>=1.21.0
-pytesseract>=0.3.8
-easyocr>=1.6.0
 torch>=1.11.0
 torchvision>=0.12.0
+numpy>=1.21.0
+
+# OCR and Text Processing
+easyocr>=1.6.0
+pytesseract>=0.3.8
+
+# GUI Framework
+PyQt5>=5.15.0
+
+# Object Tracking
 filterpy>=1.4.5
 scipy>=1.7.0
+
+# Database
+sqlalchemy>=1.4.0
+alembic>=1.8.0
+
+# Image Processing and Visualization
 matplotlib>=3.5.0
 scikit-image>=0.19.0
-loguru
+Pillow>=8.0.0
+
+# Logging and Utilities
+loguru>=0.6.0
+
+# Additional Dependencies
+difflib2>=0.1.0

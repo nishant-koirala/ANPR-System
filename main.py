@@ -26,6 +26,15 @@ from config.settings import (DEBUG_OCR_VERBOSE, DEBUG_SAVE_IMAGES, MIN_DETECTION
                              CONFIDENCE_THRESHOLD_FINAL, IMMEDIATE_FINALIZATION_THRESHOLD)
 from src.threading.frame_worker import FrameWorker
 
+# Database imports
+try:
+    from src.db import Database, get_database
+    from src.db.toggle_manager import ToggleManager
+    DATABASE_AVAILABLE = True
+except ImportError as e:
+    print(f"Database not available: {e}")
+    DATABASE_AVAILABLE = False
+
 class ANPRApplication(PlateDetectorDashboard):
     """Main ANPR Application extending the UI"""
 
@@ -38,6 +47,17 @@ class ANPRApplication(PlateDetectorDashboard):
 
     def __init__(self):
         super().__init__()
+
+        # Initialize database and toggle manager
+        self.db = get_database()
+        # 30 second cooldown with 80% similarity matching for EXIT
+        self.toggle_manager = ToggleManager(
+            database=self.db, 
+            cooldown_minutes=0.5,
+            exit_similarity_threshold=0.8
+        )
+        self.camera_id = None
+        self.init_database()
 
         # Initialize background worker thread (Phase 1)
         self.worker_thread = QThread(self)
@@ -71,6 +91,34 @@ class ANPRApplication(PlateDetectorDashboard):
                 self.worker.set_debug_dir(self.debug_dir)
             except Exception:
                 pass
+
+    def init_database(self):
+        """Initialize database connection and components"""
+        if not DATABASE_AVAILABLE:
+            print("Database components not available - running without database logging")
+            return
+        
+        try:
+            self.db = get_database()
+            self.db.create_tables()
+            
+            # Initialize toggle manager with reasonable settings
+            self.toggle_manager = ToggleManager(
+                database=self.db,
+                min_confidence=0.7,  # Only log plates with 70%+ confidence
+                cooldown_minutes=2    # 2-minute cooldown between same plate detections
+            )
+            
+            # Get or create default camera
+            self.camera_id = self.db.get_or_create_camera("MAIN_CAM", "Video Processing")
+            
+            print(f"✅ Database initialized - Camera ID: {self.camera_id}")
+            
+        except Exception as e:
+            print(f"❌ Database initialization failed: {e}")
+            self.db = None
+            self.toggle_manager = None
+            self.camera_id = None
 
     def process_frame(self, frame_or_path, preview=False):
         """Enqueue frame for processing in the worker (keeps UI responsive)."""
@@ -161,6 +209,11 @@ class ANPRApplication(PlateDetectorDashboard):
                                 self.detected_plates.append(plate_info)
                                 self.add_detection_to_table(continuous_id, final_plate_text, final_confidence, plate_img)
                                 vehicles_with_plates.add(continuous_id)
+                                
+                                # Log to database
+                                self.log_detection_to_database(final_plate_text, final_confidence, 
+                                                              f"frame_{self.frame_counter}", 
+                                                              [abs_px1, abs_py1, abs_px2, abs_py2])
 
                                 if (show_img is not None) and (not self.hide_bboxes):
                                     cv2.putText(show_img, f"{final_plate_text} ({final_confidence:.2f})",
@@ -207,16 +260,48 @@ class ANPRApplication(PlateDetectorDashboard):
 
             # Show processed frame if requested
             if preview and (show_img is not None):
-                self.show_plain_frame(show_img)
+                self.update_ui_counters()
+
         except Exception as e:
             print(f"on_worker_frame_processed error: {e}")
 
-    def on_worker_error(self, msg: str):
+    def log_detection_to_database(self, plate_text, confidence, frame_id, bbox_coords=None):
+        """Log detection to database with toggle mode logic"""
+        if not self.db or not self.toggle_manager or not self.camera_id:
+            return
+        
         try:
-            print(msg)
-        except Exception:
-            pass
-    
+            # First, log the raw detection
+            raw_id = self.db.add_raw_log(
+                camera_id=self.camera_id,
+                frame_id=frame_id,
+                plate_text=plate_text,
+                confidence=confidence,
+                bbox_coords=bbox_coords
+            )
+            
+            # Then, process with toggle manager for intelligent entry/exit logging
+            log_id = self.toggle_manager.log_vehicle_detection(
+                plate_text=plate_text,
+                confidence=confidence,
+                raw_log_id=raw_id,
+                camera_id=self.camera_id,
+                session_id=f"video_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            
+            if log_id:
+                print(f"📊 Database logged: {plate_text} (confidence: {confidence:.2f}, log_id: {log_id})")
+            else:
+                print(f"📊 Detection ignored by toggle manager: {plate_text}")
+                
+        except Exception as e:
+            print(f"❌ Database logging error: {e}")
+
+    def on_worker_error(self, error_msg):
+        """Handle worker errors on the UI thread."""
+        print(f"Worker error: {error_msg}")
+        QMessageBox.warning(self, "Processing Error", f"Frame processing error: {error_msg}")
+
     def on_worker_reload_progress(self, msg: str):
         """Update model reload progress dialog from worker messages."""
         try:
@@ -377,6 +462,15 @@ class ANPRApplication(PlateDetectorDashboard):
                 self.worker_thread.wait(5000)
         except Exception as e:
             print(f"Worker thread shutdown error: {e}")
+        
+        # Clean up database connections
+        try:
+            if self.db:
+                self.db.close()
+                print("✅ Database connections closed")
+        except Exception as e:
+            print(f"Error closing database: {e}")
+        
         super().closeEvent(event)
 
 def main():

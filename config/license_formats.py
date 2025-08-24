@@ -83,33 +83,36 @@ class Format1(LicenseFormat):
         return str(text).upper().replace(' ', '')
 
 class Format2(LicenseFormat):
-    """Format 2: AA 0101 or AA\n0101 (6 characters) - New Nepali format"""
+    """Format 2: AA 1111 - New Nepali format (exactly 4 digits)"""
     
     def __init__(self):
         super().__init__(
             name="format2",
-            description="AA 0101 or AA\\n0101",
-            length=6,
+            description="AA 1111",
+            length=6,  # Exactly 6 characters (2 letters + 4 digits)
             pattern="LLDDDD"
         )
     
     def validate(self, text):
-        """Validate Format 2: AA 0101"""
+        """Validate Format 2: AA 1111 (exactly 2 letters + 4 digits)"""
         # Remove spaces and newlines for validation
         clean_text = text.replace(' ', '').replace('\n', '')
         
+        # Must be exactly 6 characters (AA + 1111)
         if len(clean_text) != 6:
             return False
         
-        # AA0101 pattern: 2 letters + 4 digits
-        return (
-            (clean_text[0] in string.ascii_uppercase or clean_text[0] in INT_TO_CHAR.keys()) and
-            (clean_text[1] in string.ascii_uppercase or clean_text[1] in INT_TO_CHAR.keys()) and
-            (clean_text[2] in '0123456789' or clean_text[2] in CHAR_TO_INT.keys()) and
-            (clean_text[3] in '0123456789' or clean_text[3] in CHAR_TO_INT.keys()) and
-            (clean_text[4] in '0123456789' or clean_text[4] in CHAR_TO_INT.keys()) and
-            (clean_text[5] in '0123456789' or clean_text[5] in CHAR_TO_INT.keys())
-        )
+        # First 2 must be letters
+        if not ((clean_text[0] in string.ascii_uppercase or clean_text[0] in INT_TO_CHAR.keys()) and
+                (clean_text[1] in string.ascii_uppercase or clean_text[1] in INT_TO_CHAR.keys())):
+            return False
+        
+        # Last 4 must be digits
+        for i in range(2, 6):
+            if not (clean_text[i] in '0123456789' or clean_text[i] in CHAR_TO_INT.keys()):
+                return False
+        
+        return True
     
     def format_text(self, text):
         """Format text for Format 2"""
@@ -120,23 +123,20 @@ class Format2(LicenseFormat):
             return text
         
         license_plate_ = ''
-        # Position-based character mapping
-        mapping = {
-            0: INT_TO_CHAR,  # Letter
-            1: INT_TO_CHAR,  # Letter
-            2: CHAR_TO_INT,  # Digit
-            3: CHAR_TO_INT,  # Digit
-            4: CHAR_TO_INT,  # Digit
-            5: CHAR_TO_INT   # Digit
-        }
-        
+        # Apply character mapping for each position
         for i, char in enumerate(clean_text):
-            if char in mapping[i]:
-                license_plate_ += mapping[i][char]
-            else:
-                license_plate_ += char
+            if i < 2:  # Letters
+                if char in INT_TO_CHAR:
+                    license_plate_ += INT_TO_CHAR[char]
+                else:
+                    license_plate_ += char
+            else:  # Digits
+                if char in CHAR_TO_INT:
+                    license_plate_ += CHAR_TO_INT[char]
+                else:
+                    license_plate_ += char
         
-        # Format as AA 0101
+        # Format as AA 1111
         return f"{license_plate_[:2]} {license_plate_[2:]}"
     
     def clean_text(self, text):
@@ -181,6 +181,6 @@ def clean_text_for_format(text, format_name):
 # Format display names for UI
 FORMAT_DISPLAY_NAMES = {
     'format1': "Format 1: AA00AAA (7 characters)",
-    'format2': "Format 2: AA 0101 or AA\n0101",
+    'format2': "Format 2: AA 1111 (6 characters)",
     'auto': "Automatic: Try both formats"
 }
