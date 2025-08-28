@@ -4,7 +4,8 @@ User Management Page for RBAC System
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                            QTableWidgetItem, QPushButton, QLineEdit, QComboBox,
                            QLabel, QMessageBox, QDialog, QFormLayout, QCheckBox,
-                           QGroupBox, QScrollArea, QFrame, QHeaderView)
+                           QGroupBox, QScrollArea, QFrame, QHeaderView, QRadioButton,
+                           QButtonGroup)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 from datetime import datetime
@@ -15,6 +16,7 @@ class CreateUserDialog(QDialog):
     
     def __init__(self, auth_manager, parent=None):
         super().__init__(parent)
+        print(f"DEBUG: CreateUserDialog.__init__ called with auth_manager: {auth_manager}")
         self.auth_manager = auth_manager
         self.init_ui()
         
@@ -45,15 +47,21 @@ class CreateUserDialog(QDialog):
         form_layout.addRow("Email*:", self.email_edit)
         form_layout.addRow("Full Name:", self.fullname_edit)
         
-        # Role selection
-        roles_group = QGroupBox("Assign Roles")
+        # Role selection (single role only)
+        roles_group = QGroupBox("Assign Role (Select One)")
         roles_layout = QVBoxLayout()
         
-        self.role_checkboxes = {}
-        for role in [Roles.VIEWER, Roles.OPERATOR, Roles.ADMIN, Roles.SUPERADMIN]:
-            checkbox = QCheckBox(role)
-            self.role_checkboxes[role] = checkbox
-            roles_layout.addWidget(checkbox)
+        self.role_button_group = QButtonGroup()
+        self.role_buttons = {}
+        
+        for i, role in enumerate([Roles.VIEWER, Roles.OPERATOR, Roles.ADMIN, Roles.SUPERADMIN]):
+            radio_button = QRadioButton(role)
+            self.role_buttons[role] = radio_button
+            self.role_button_group.addButton(radio_button, i)
+            roles_layout.addWidget(radio_button)
+        
+        # Set VIEWER as default
+        self.role_buttons[Roles.VIEWER].setChecked(True)
         
         roles_group.setLayout(roles_layout)
         
@@ -77,20 +85,52 @@ class CreateUserDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         
     def create_user(self):
-        username = self.username_edit.text().strip()
-        password = self.password_edit.text()
-        email = self.email_edit.text().strip()
-        fullname = self.fullname_edit.text().strip()
-        
-        if not all([username, password, email]):
-            QMessageBox.warning(self, "Error", "Please fill in all required fields")
-            return
-        
-        # Get selected roles
-        selected_roles = [role for role, checkbox in self.role_checkboxes.items() 
-                         if checkbox.isChecked()]
-        
         try:
+            print("DEBUG: Starting user creation process...")
+            
+            username = self.username_edit.text().strip()
+            password = self.password_edit.text()
+            email = self.email_edit.text().strip()
+            fullname = self.fullname_edit.text().strip()
+            
+            print(f"DEBUG: Form data - Username: '{username}', Email: '{email}', Full name: '{fullname}'")
+            
+            # Validate required fields
+            if not username:
+                QMessageBox.warning(self, "Error", "Username is required")
+                return
+            if not password:
+                QMessageBox.warning(self, "Error", "Password is required")
+                return
+            if not email:
+                QMessageBox.warning(self, "Error", "Email is required")
+                return
+            
+            # Basic email validation
+            if '@' not in email or '.' not in email:
+                QMessageBox.warning(self, "Error", "Please enter a valid email address")
+                return
+            
+            # Get selected role (only one can be selected)
+            selected_role = None
+            for role, radio_button in self.role_buttons.items():
+                if radio_button.isChecked():
+                    selected_role = role
+                    break
+            
+            if not selected_role:
+                QMessageBox.warning(self, "Error", "Please select a role for the user")
+                return
+            
+            selected_roles = [selected_role]
+            print(f"DEBUG: Selected role: {selected_role}")
+            
+            # Check if auth_manager is available
+            if not self.auth_manager:
+                QMessageBox.critical(self, "Error", "Authentication manager not available")
+                return
+            
+            print("DEBUG: Calling auth_manager.create_user...")
             user_id = self.auth_manager.create_user(
                 username=username,
                 password=password,
@@ -99,12 +139,19 @@ class CreateUserDialog(QDialog):
                 roles=selected_roles
             )
             
+            print(f"DEBUG: User created successfully with ID: {user_id}")
             QMessageBox.information(self, "Success", 
                                   f"User '{username}' created successfully (ID: {user_id})")
             self.accept()
             
+        except ValueError as ve:
+            print(f"DEBUG: ValueError occurred: {str(ve)}")
+            QMessageBox.critical(self, "Validation Error", str(ve))
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to create user: {str(e)}")
+            print(f"DEBUG: Exception occurred: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to create user: {str(e)}\n\nType: {type(e).__name__}")
 
 class UserManagementPage(QWidget):
     """User management interface for RBAC system"""
@@ -270,12 +317,26 @@ class UserManagementPage(QWidget):
     
     def create_user(self):
         """Open create user dialog"""
+        print("DEBUG: Create user button clicked!")
+        
         if not self.check_permissions():
+            print("DEBUG: Permission check failed")
             return
-            
-        dialog = CreateUserDialog(self.auth_manager, self)
-        if dialog.exec_() == QDialog.Accepted:
-            self.load_users()
+        
+        print("DEBUG: Opening CreateUserDialog...")
+        try:
+            dialog = CreateUserDialog(self.auth_manager, self)
+            print("DEBUG: Dialog created successfully")
+            result = dialog.exec_()
+            print(f"DEBUG: Dialog result: {result}")
+            if result == QDialog.Accepted:
+                print("DEBUG: Dialog accepted, reloading users...")
+                self.load_users()
+        except Exception as e:
+            print(f"DEBUG: Exception creating dialog: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to open user creation dialog: {str(e)}")
     
     def load_users(self):
         """Load users from database"""

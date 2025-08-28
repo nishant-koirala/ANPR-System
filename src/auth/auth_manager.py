@@ -243,58 +243,85 @@ class AuthManager:
     def create_user(self, username: str, password: str, email: str, full_name: str = None, 
                    roles: List[str] = None, status: str = "ACTIVE") -> int:
         """Create new user with optional roles and status"""
-        # Skip permission check if no current user (initial setup)
-        if self.current_user:
-            self.require_permission("MANAGE_USERS")
+        print(f"DEBUG: create_user called with username='{username}', email='{email}', roles={roles}")
         
-        with self.get_session() as session:
-            # Check if username/email already exists
-            existing = session.query(User).filter(
-                or_(User.username == username, User.email == email)
-            ).first()
+        try:
+            # Skip permission check if no current user (initial setup)
+            if self.current_user:
+                try:
+                    self.require_permission("MANAGE_USERS")
+                except Exception as e:
+                    print(f"DEBUG: Permission check failed: {e}")
+                    raise
             
-            if existing:
-                raise ValueError("Username or email already exists")
-            
-            # Convert status string to enum
-            from ..db.rbac_models import UserStatus
-            try:
-                user_status = UserStatus(status)
-            except ValueError:
-                user_status = UserStatus.ACTIVE  # Default fallback
-            
-            # Create new user
-            password_hash = self.hash_password(password)
-            new_user = User(
-                username=username,
-                password_hash=password_hash,
-                email=email,
-                full_name=full_name,
-                status=user_status,
-                created_by=self.current_user.user_id if self.current_user else None
-            )
-            session.add(new_user)
-            session.flush()
-            
-            # Assign roles
-            if roles:
-                for role_name in roles:
-                    role = session.query(Role).filter(Role.role_name == role_name).first()
-                    if role:
-                        user_role = UserRole(
-                            user_id=user.user_id,
-                            role_id=role.role_id,
-                            assigned_by=self.current_user.user_id if self.current_user else None
-                        )
-                        session.add(user_role)
-            
-            session.commit()
-            
-            self._log_audit(self.current_user.user_id if self.current_user else None, 
-                          "CREATE_USER", "USER", str(user.user_id), 
-                          details=f"Created user: {username}")
-            
-            return user.user_id
+            with self.get_session() as session:
+                print("DEBUG: Got database session")
+                
+                # Check if username/email already exists
+                existing = session.query(User).filter(
+                    or_(User.username == username, User.email == email)
+                ).first()
+                
+                if existing:
+                    print(f"DEBUG: User already exists - username: {existing.username}, email: {existing.email}")
+                    raise ValueError("Username or email already exists")
+                
+                # Convert status string to enum
+                from ..db.rbac_models import UserStatus
+                try:
+                    user_status = UserStatus(status)
+                except ValueError:
+                    user_status = UserStatus.ACTIVE  # Default fallback
+                
+                print(f"DEBUG: Creating user with status: {user_status}")
+                
+                # Create new user
+                password_hash = self.hash_password(password)
+                new_user = User(
+                    username=username,
+                    password_hash=password_hash,
+                    email=email,
+                    full_name=full_name,
+                    status=user_status,
+                    created_by=self.current_user.user_id if self.current_user else None
+                )
+                session.add(new_user)
+                session.flush()
+                
+                # Store user_id before session operations
+                user_id = new_user.user_id
+                print(f"DEBUG: User created with ID: {user_id}")
+                
+                # Assign roles
+                if roles:
+                    print(f"DEBUG: Assigning roles: {roles}")
+                    for role_name in roles:
+                        role = session.query(Role).filter(Role.role_name == role_name).first()
+                        if role:
+                            print(f"DEBUG: Found role {role_name} with ID: {role.role_id}")
+                            user_role = UserRole(
+                                user_id=user_id,
+                                role_id=role.role_id,
+                                assigned_by=self.current_user.user_id if self.current_user else None
+                            )
+                            session.add(user_role)
+                        else:
+                            print(f"DEBUG: Role {role_name} not found in database")
+                
+                session.commit()
+                print("DEBUG: Transaction committed successfully")
+                
+                self._log_audit(self.current_user.user_id if self.current_user else None, 
+                              "CREATE_USER", "USER", str(user_id), 
+                              details=f"Created user: {username}")
+                
+                return user_id
+                
+        except Exception as e:
+            print(f"DEBUG: Exception in create_user: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def _log_audit(self, user_id: int, action: str, resource_type: str = None, 
                   resource_id: str = None, details: str = None, ip_address: str = None, 
