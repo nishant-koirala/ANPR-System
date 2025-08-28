@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QHeaderView, QTabWidget, QTextEdit, QSpinBox
 )
 from PyQt5.QtCore import Qt, QDate, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 
 # Add src to path for database imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
@@ -139,16 +139,22 @@ class DatabasePage(QWidget):
         
         # Vehicle logs table
         self.vehicle_table = QTableWidget()
-        self.vehicle_table.setColumnCount(7)
+        self.vehicle_table.setColumnCount(8)
         self.vehicle_table.setHorizontalHeaderLabels([
-            "Log ID", "Plate Number", "Toggle Mode", "Captured At", 
+            "Log ID", "Plate Image", "Plate Number", "Toggle Mode", "Captured At", 
             "Duration (min)", "Session ID", "Camera"
         ])
+        
+        # Set row height for images
+        self.vehicle_table.setRowHeight(0, 80)  # Will be set for each row with image
         
         # Make table sortable and resizable
         self.vehicle_table.setSortingEnabled(True)
         header = self.vehicle_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
+        
+        # Enable editing on double-click for plate number column
+        self.vehicle_table.itemDoubleClicked.connect(self.on_item_double_clicked)
         
         layout.addWidget(self.vehicle_table)
         
@@ -288,13 +294,21 @@ class DatabasePage(QWidget):
                     except Exception:
                         pass
                     
+                    # Set row height for image display
+                    self.vehicle_table.setRowHeight(row, 80)
+                    
                     self.vehicle_table.setItem(row, 0, QTableWidgetItem(str(log.log_id)))
-                    self.vehicle_table.setItem(row, 1, QTableWidgetItem(log.plate_number))
-                    self.vehicle_table.setItem(row, 2, QTableWidgetItem(log.toggle_mode.value))
-                    self.vehicle_table.setItem(row, 3, QTableWidgetItem(log.captured_at.strftime("%Y-%m-%d %H:%M:%S")))
-                    self.vehicle_table.setItem(row, 4, QTableWidgetItem(str(log.duration_minutes or "")))
-                    self.vehicle_table.setItem(row, 5, QTableWidgetItem(log.session_id or ""))
-                    self.vehicle_table.setItem(row, 6, QTableWidgetItem(camera_name))
+                    
+                    # Add plate image in column 1
+                    image_widget = self.create_image_widget(log)
+                    self.vehicle_table.setCellWidget(row, 1, image_widget)
+                    
+                    self.vehicle_table.setItem(row, 2, QTableWidgetItem(log.plate_number))
+                    self.vehicle_table.setItem(row, 3, QTableWidgetItem(log.toggle_mode.value))
+                    self.vehicle_table.setItem(row, 4, QTableWidgetItem(log.captured_at.strftime("%Y-%m-%d %H:%M:%S")))
+                    self.vehicle_table.setItem(row, 5, QTableWidgetItem(str(log.duration_minutes or "")))
+                    self.vehicle_table.setItem(row, 6, QTableWidgetItem(log.session_id or ""))
+                    self.vehicle_table.setItem(row, 7, QTableWidgetItem(camera_name))
                 
                 print("✅ Vehicle logs loaded successfully")
                 
@@ -473,12 +487,20 @@ class DatabasePage(QWidget):
                 # Update table with filtered results
                 self.vehicle_table.setRowCount(len(logs))
                 for i, log in enumerate(logs):
+                    # Set row height for image display
+                    self.vehicle_table.setRowHeight(i, 80)
+                    
                     self.vehicle_table.setItem(i, 0, QTableWidgetItem(str(log.log_id)))
-                    self.vehicle_table.setItem(i, 1, QTableWidgetItem(log.plate_number))
-                    self.vehicle_table.setItem(i, 2, QTableWidgetItem(log.toggle_mode.value))
-                    self.vehicle_table.setItem(i, 3, QTableWidgetItem(log.captured_at.strftime('%Y-%m-%d %H:%M:%S')))
+                    
+                    # Add plate image in column 1
+                    image_widget = self.create_image_widget(log)
+                    self.vehicle_table.setCellWidget(i, 1, image_widget)
+                    
+                    self.vehicle_table.setItem(i, 2, QTableWidgetItem(log.plate_number))
+                    self.vehicle_table.setItem(i, 3, QTableWidgetItem(log.toggle_mode.value))
+                    self.vehicle_table.setItem(i, 4, QTableWidgetItem(log.captured_at.strftime('%Y-%m-%d %H:%M:%S')))
                     duration = str(log.duration_minutes) if log.duration_minutes else "N/A"
-                    self.vehicle_table.setItem(i, 4, QTableWidgetItem(duration))
+                    self.vehicle_table.setItem(i, 5, QTableWidgetItem(duration))
                 
         except Exception as e:
             print(f"Error filtering vehicle logs: {e}")
@@ -517,3 +539,151 @@ class DatabasePage(QWidget):
         except Exception as e:
             print(f"Error filtering raw logs: {e}")
             self.load_raw_logs()  # Fallback to full reload
+    
+    def create_image_widget(self, log):
+        """Create a widget with plate image for table cell"""
+        try:
+            # Check if log has plate image path
+            image_path = None
+            if hasattr(log, 'plate_image_path') and log.plate_image_path:
+                image_path = log.plate_image_path
+            elif hasattr(log, 'thumbnail_path') and log.thumbnail_path:
+                image_path = log.thumbnail_path
+            
+            # Create a label widget
+            image_label = QLabel()
+            image_label.setAlignment(Qt.AlignCenter)
+            image_label.setStyleSheet("border: 1px solid #ddd; background: white; margin: 2px;")
+            image_label.setFixedSize(70, 70)
+            
+            if image_path and os.path.exists(image_path):
+                # Load and scale the image
+                pixmap = QPixmap(image_path)
+                if not pixmap.isNull():
+                    # Scale image to fit in label (65x65 pixels with margin)
+                    scaled_pixmap = pixmap.scaled(65, 65, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    image_label.setPixmap(scaled_pixmap)
+                    image_label.setToolTip(f"Plate image: {os.path.basename(image_path)}")
+                else:
+                    image_label.setText("Invalid\nImage")
+                    image_label.setStyleSheet("border: 1px solid #ddd; background: #f8f8f8; color: #666; font-size: 10px;")
+            else:
+                image_label.setText("No\nImage")
+                image_label.setStyleSheet("border: 1px solid #ddd; background: #f8f8f8; color: #666; font-size: 10px;")
+            
+            return image_label
+            
+        except Exception as e:
+            print(f"Error creating image widget: {e}")
+            error_label = QLabel("Error")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setStyleSheet("border: 1px solid #red; background: #ffe6e6; color: red; font-size: 10px;")
+            error_label.setFixedSize(70, 70)
+            return error_label
+    
+    def on_item_double_clicked(self, item):
+        """Handle double-click on table items for editing"""
+        if not item:
+            return
+            
+        row = item.row()
+        col = item.column()
+        
+        # Only allow editing of plate number column (column 2)
+        if col == 2:
+            self.edit_plate_number(row)
+    
+    def edit_plate_number(self, row):
+        """Edit plate number for the selected row"""
+        try:
+            # Get log_id from the first column
+            log_id_item = self.vehicle_table.item(row, 0)
+            if not log_id_item:
+                return
+                
+            log_id = int(log_id_item.text())
+            
+            # Get current plate number
+            plate_item = self.vehicle_table.item(row, 2)
+            if not plate_item:
+                return
+                
+            current_plate = plate_item.text()
+            
+            # Show input dialog for new plate number
+            from PyQt5.QtWidgets import QInputDialog
+            new_plate, ok = QInputDialog.getText(
+                self, 
+                'Edit Plate Number', 
+                f'Edit plate number for Log ID {log_id}:',
+                text=current_plate
+            )
+            
+            if ok and new_plate.strip() and new_plate.strip() != current_plate:
+                self.update_plate_number(log_id, current_plate, new_plate.strip(), row)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to edit plate number: {e}")
+    
+    def update_plate_number(self, log_id, old_plate, new_plate, row):
+        """Update plate number in database and table"""
+        if not self.db:
+            QMessageBox.warning(self, "Warning", "Database not available")
+            return
+            
+        try:
+            with self.db.get_session() as session:
+                # Get the vehicle log record
+                vehicle_log = session.query(VehicleLog).filter(VehicleLog.log_id == log_id).first()
+                if not vehicle_log:
+                    QMessageBox.warning(self, "Warning", "Vehicle log not found")
+                    return
+                
+                # Update the plate number
+                vehicle_log.original_plate_number = old_plate if not vehicle_log.original_plate_number else vehicle_log.original_plate_number
+                vehicle_log.plate_number = new_plate
+                vehicle_log.is_edited = True
+                vehicle_log.edited_at = datetime.now()
+                vehicle_log.edit_reason = "Manual edit via database page"
+                
+                # Create audit trail entry with robust error handling
+                try:
+                    from src.db.models import PlateEditHistory
+                    
+                    # Create basic edit history record
+                    edit_data = {
+                        'log_id': log_id,
+                        'old_plate_number': old_plate,
+                        'new_plate_number': new_plate,
+                        'edited_by': 1
+                    }
+                    
+                    # Try to add optional fields if they exist in the schema
+                    try:
+                        edit_data['edit_reason'] = "Manual edit via database page"
+                    except:
+                        pass
+                    
+                    edit_history = PlateEditHistory(**edit_data)
+                    session.add(edit_history)
+                    
+                except Exception as audit_error:
+                    print(f"Warning: Could not create audit trail: {audit_error}")
+                    # Continue without audit trail - the main edit will still work
+                
+                session.commit()
+                
+                # Update the table display
+                self.vehicle_table.item(row, 2).setText(new_plate)
+                
+                # Show success message
+                QMessageBox.information(
+                    self, 
+                    "Success", 
+                    f"Plate number updated from '{old_plate}' to '{new_plate}'"
+                )
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to update plate number: {e}")
+            import traceback
+            traceback.print_exc()

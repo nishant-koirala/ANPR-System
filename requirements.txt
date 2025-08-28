@@ -30,3 +30,6 @@ loguru>=0.6.0
 
 # Additional Dependencies
 difflib2>=0.1.0
+
+# Authentication and Security
+bcrypt>=3.2.0

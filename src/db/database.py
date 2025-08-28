@@ -12,7 +12,8 @@ from contextlib import contextmanager
 from typing import Optional, Generator
 from datetime import datetime
 
-from .models import Base, RawLog, VehicleLog, Camera, Vehicle, ToggleMode
+from .models import RawLog, VehicleLog, Camera, Vehicle, ToggleMode
+from .rbac_models import Base
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,8 @@ class Database:
     
     def add_raw_log(self, camera_id: int, frame_id: str, plate_text: str, 
                     confidence: float, image_path: Optional[str] = None,
-                    bbox_coords: Optional[tuple] = None, processing_time: Optional[float] = None) -> int:
+                    bbox_coords: Optional[tuple] = None, processing_time: Optional[float] = None,
+                    image_data: Optional[dict] = None) -> int:
         """
         Add a new raw log entry
         
@@ -134,6 +136,7 @@ class Database:
             image_path: Path to stored image
             bbox_coords: Bounding box coordinates (x, y, width, height)
             processing_time: Time taken for detection/OCR
+            image_data: Dictionary with plate image data
             
         Returns:
             raw_id of the created record
@@ -152,6 +155,14 @@ class Database:
             if bbox_coords:
                 raw_log.bbox_x, raw_log.bbox_y, raw_log.bbox_width, raw_log.bbox_height = bbox_coords
             
+            # Add image data if provided
+            if image_data:
+                raw_log.plate_image_path = image_data.get('plate_image_path')
+                raw_log.thumbnail_path = image_data.get('thumbnail_path')
+                raw_log.image_width = image_data.get('image_width')
+                raw_log.image_height = image_data.get('image_height')
+                raw_log.image_size = image_data.get('image_size')
+            
             session.add(raw_log)
             session.flush()
             return raw_log.raw_id
@@ -159,7 +170,7 @@ class Database:
     def add_vehicle_log(self, plate_number: str, toggle_mode: ToggleMode, 
                        raw_ref: int, vehicle_id: Optional[int] = None,
                        session_id: Optional[str] = None, location_info: Optional[str] = None,
-                       duration_minutes: Optional[int] = None) -> int:
+                       duration_minutes: Optional[int] = None, image_data: Optional[dict] = None) -> int:
         """
         Add a new vehicle log entry with toggle mode
         
@@ -186,6 +197,14 @@ class Database:
                 location_info=location_info,
                 duration_minutes=duration_minutes
             )
+            
+            # Add image data if provided
+            if image_data:
+                vehicle_log.plate_image_path = image_data.get('plate_image_path')
+                vehicle_log.thumbnail_path = image_data.get('thumbnail_path')
+                vehicle_log.image_width = image_data.get('image_width')
+                vehicle_log.image_height = image_data.get('image_height')
+                vehicle_log.image_size = image_data.get('image_size')
             
             session.add(vehicle_log)
             session.commit()

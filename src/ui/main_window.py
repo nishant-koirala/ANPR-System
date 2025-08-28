@@ -461,7 +461,8 @@ class PlateDetectorDashboard(QWidget):
         self.sidebar.setFixedWidth(150)
         self.sidebar.addItems([
             "▶ Dashboard",
-            "📈 Database", 
+            "🚗 Vehicle Log", 
+            "👥 User Management",
             "🔍 Search Plate",
             "⚙ Settings",
             "🚪 Logout"
@@ -473,15 +474,19 @@ class PlateDetectorDashboard(QWidget):
         )
         self.sidebar.currentRowChanged.connect(self.on_sidebar_changed)
 
-        # Stack (Dashboard + Database + Settings)
+        # Stack (Dashboard + Vehicle Log + User Management + Search Plate + Settings)
         self.stack = QStackedWidget()
         
         self.dashboard_page = self.build_dashboard_page()
-        self.database_page = self.build_database()
+        self.vehicle_log_page = self.build_database()
+        self.user_management_page = self.build_user_management()
+        self.search_plate_page = self.build_search_plate()
         self.settings_page = self.build_settings_page()
         
         self.stack.addWidget(self.dashboard_page)
-        self.stack.addWidget(self.database_page)
+        self.stack.addWidget(self.vehicle_log_page)
+        self.stack.addWidget(self.user_management_page)
+        self.stack.addWidget(self.search_plate_page)
         self.stack.addWidget(self.settings_page)
 
         main_layout.addWidget(self.sidebar)
@@ -498,6 +503,37 @@ class PlateDetectorDashboard(QWidget):
             page = QWidget()
             layout = QVBoxLayout(page)
             error_label = QLabel(f"Database page unavailable: {e}")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return page
+
+    def build_user_management(self):
+        """Build user management page"""
+        try:
+            from .user_management_page import UserManagementPage
+            from ..auth.auth_manager import AuthManager
+            from ..db.database import get_database
+            
+            # Initialize auth manager if not already available
+            if not hasattr(self, 'auth_manager'):
+                # Get database instance and use its session factory
+                db = get_database()
+                self.auth_manager = AuthManager(db.get_session)
+            
+            return UserManagementPage(self.auth_manager)
+        except ImportError as e:
+            # Fallback if user management page can't be imported
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"User Management unavailable: {e}")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return page
+        except Exception as e:
+            # Fallback for any other errors
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"User Management error: {e}")
             error_label.setAlignment(Qt.AlignCenter)
             layout.addWidget(error_label)
             return page
@@ -667,15 +703,48 @@ class PlateDetectorDashboard(QWidget):
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(["S.no", "Plate Image", "Plate No. (Vehicle ID)", "Type", "Date", "TimeStamp", "Site (Confidence)"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setFixedHeight(200)
-        self.table.setColumnWidth(1, 120)
-        self.table.setRowHeight(0, 80)
-        content_layout.addWidget(self.table)
 
         return page
 
+    def build_search_plate(self):
+        """Build search plate page"""
+        try:
+            from .search_plate_page import SearchPlatePage
+            # Use db.get_session if available, otherwise create a fallback
+            if hasattr(self, 'db') and self.db:
+                session_factory = self.db.get_session
+            else:
+                # Fallback: try to get database instance
+                from ..db.database import get_database
+                db = get_database()
+                session_factory = db.get_session
+            
+            # Pass auth_manager to enable editing functionality
+            search_page = SearchPlatePage(session_factory)
+            if hasattr(self, 'auth_manager'):
+                search_page.auth_manager = self.auth_manager
+            elif hasattr(self, 'simple_auth'):
+                search_page.auth_manager = self.simple_auth
+            return search_page
+        except ImportError as e:
+            # Fallback if search plate page can't be imported
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"Search Plate unavailable: {e}")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return page
+        except Exception as e:
+            # Fallback for any other errors
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"Search Plate error: {e}")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return page
+
     def build_settings_page(self):
-        """Build comprehensive settings page"""
+        """Build settings page"""
         page = QWidget()
         main_layout = QVBoxLayout(page)
 
@@ -775,12 +844,29 @@ class PlateDetectorDashboard(QWidget):
         """Handle sidebar navigation"""
         if index == 0:  # Dashboard
             self.stack.setCurrentIndex(0)
-        elif index == 1:  # Database
+        elif index == 1:  # Vehicle Log
             self.stack.setCurrentIndex(1)
-        elif index == 3:  # Settings
+        elif index == 2:  # User Management
             self.stack.setCurrentIndex(2)
+        elif index == 3:  # Search Plate
+            self.stack.setCurrentIndex(3)
+        elif index == 4:  # Settings
+            self.stack.setCurrentIndex(4)
+        elif index == 5:  # Logout
+            self.logout()
         else:  # Default to Dashboard
             self.stack.setCurrentIndex(0)
+
+    def logout(self):
+        """Handle user logout"""
+        reply = QMessageBox.question(self, "Logout", 
+                                   "Are you sure you want to logout?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            if hasattr(self, 'auth_manager'):
+                self.auth_manager.logout()
+            self.close()
 
     def apply_settings(self):
         """Apply settings changes"""

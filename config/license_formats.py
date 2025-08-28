@@ -40,21 +40,37 @@ class Format1(LicenseFormat):
     
     def validate(self, text):
         """Validate Format 1: AA00AAA"""
-        if len(text) != 7:
+        # Clean text first
+        clean_text = text.replace(' ', '').replace('\n', '').upper()
+        
+        # Allow 4-7 characters for flexibility
+        if len(clean_text) < 4 or len(clean_text) > 7:
+            return False
+        
+        # If it's just 4 digits, accept it (partial plate)
+        if len(clean_text) == 4 and clean_text.isdigit():
+            return True
+        
+        # If it's not exactly 7 characters, reject for full format
+        if len(clean_text) != 7:
             return False
         
         return (
-            (text[0] in string.ascii_uppercase or text[0] in INT_TO_CHAR.keys()) and
-            (text[1] in string.ascii_uppercase or text[1] in INT_TO_CHAR.keys()) and
-            (text[2] in '0123456789' or text[2] in CHAR_TO_INT.keys()) and
-            (text[3] in '0123456789' or text[3] in CHAR_TO_INT.keys()) and
-            (text[4] in string.ascii_uppercase or text[4] in INT_TO_CHAR.keys()) and
-            (text[5] in string.ascii_uppercase or text[5] in INT_TO_CHAR.keys()) and
-            (text[6] in string.ascii_uppercase or text[6] in INT_TO_CHAR.keys())
+            (clean_text[0] in string.ascii_uppercase or clean_text[0] in INT_TO_CHAR.keys()) and
+            (clean_text[1] in string.ascii_uppercase or clean_text[1] in INT_TO_CHAR.keys()) and
+            (clean_text[2] in '0123456789' or clean_text[2] in CHAR_TO_INT.keys()) and
+            (clean_text[3] in '0123456789' or clean_text[3] in CHAR_TO_INT.keys()) and
+            (clean_text[4] in string.ascii_uppercase or clean_text[4] in INT_TO_CHAR.keys()) and
+            (clean_text[5] in string.ascii_uppercase or clean_text[5] in INT_TO_CHAR.keys()) and
+            (clean_text[6] in string.ascii_uppercase or clean_text[6] in INT_TO_CHAR.keys())
         )
     
     def format_text(self, text):
         """Format text for Format 1"""
+        # Handle 4-digit partial plates
+        if len(text) == 4 and text.isdigit():
+            return text  # Return as-is for partial plates
+        
         if len(text) != 7:
             return text
             
@@ -96,18 +112,26 @@ class Format2(LicenseFormat):
     def validate(self, text):
         """Validate Format 2: AA 1111 (exactly 2 letters + 4 digits)"""
         # Remove spaces and newlines for validation
-        clean_text = text.replace(' ', '').replace('\n', '')
+        clean_text = text.replace(' ', '').replace('\n', '').upper()
+        
+        # Allow 4-6 characters for flexibility
+        if len(clean_text) < 4 or len(clean_text) > 6:
+            return False
+        
+        # If it's just 4 digits, accept it (partial plate)
+        if len(clean_text) == 4 and clean_text.isdigit():
+            return True
         
         # Must be exactly 6 characters (AA + 1111)
         if len(clean_text) != 6:
             return False
         
-        # First 2 must be letters
-        if not ((clean_text[0] in string.ascii_uppercase or clean_text[0] in INT_TO_CHAR.keys()) and
-                (clean_text[1] in string.ascii_uppercase or clean_text[1] in INT_TO_CHAR.keys())):
-            return False
+        # First 2 must be letters (allow common OCR substitutions)
+        for i in range(2):
+            if not (clean_text[i] in string.ascii_uppercase or clean_text[i] in INT_TO_CHAR.keys()):
+                return False
         
-        # Last 4 must be digits
+        # Last 4 must be digits (allow common OCR substitutions)
         for i in range(2, 6):
             if not (clean_text[i] in '0123456789' or clean_text[i] in CHAR_TO_INT.keys()):
                 return False
@@ -118,6 +142,10 @@ class Format2(LicenseFormat):
         """Format text for Format 2"""
         # Clean and validate
         clean_text = text.replace(' ', '').replace('\n', '')
+        
+        # Handle 4-digit partial plates
+        if len(clean_text) == 4 and clean_text.isdigit():
+            return clean_text  # Return as-is for partial plates
         
         if len(clean_text) != 6:
             return text

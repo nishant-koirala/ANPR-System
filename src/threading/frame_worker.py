@@ -15,6 +15,7 @@ from config import settings
 from src.detection.vehicle_detector import VehicleDetector
 from src.detection.plate_detector import PlateDetector
 from src.ocr.plate_reader import PlateReader
+from src.utils.image_processor import PlateImageProcessor
 
 
 class FrameWorker(QObject):
@@ -45,6 +46,7 @@ class FrameWorker(QObject):
             self.vehicle_detector = VehicleDetector(self.device, model_path)
             self.plate_detector = PlateDetector(self.device)
             self.plate_reader = PlateReader()
+            self.image_processor = PlateImageProcessor()
 
             # Setup tracker per settings
             self.tracker_type = str(getattr(settings, 'TRACKER_TYPE', 'SORT')).upper()
@@ -485,6 +487,7 @@ class FrameWorker(QObject):
                                 'plate_img': plate_img,
                                 'license_format': license_format,
                                 'frame_counter': int(frame_counter),
+                                'full_frame': original_img,  # Add full frame for image saving
                             }
                             try:
                                 self.q_ocr.put_nowait(task)
@@ -517,6 +520,32 @@ class FrameWorker(QObject):
                 frame_counter = int(task['frame_counter'])
 
                 text, conf = self.plate_reader.extract_plate_text(plate_img, license_format)
+                
+                # Save plate image if text was detected
+                image_data = {}
+                if text and len(text.strip()) > 0:
+                    try:
+                        # Generate a temporary raw_id for image naming (will be replaced with actual DB ID)
+                        temp_raw_id = f"{sort_id}_{frame_counter}_{int(time.time())}"
+                        image_result = self.image_processor.save_plate_images(
+                            frame=task.get('full_frame'),  # Need full frame for context
+                            bbox=abs_bbox,
+                            plate_text=text,
+                            timestamp=datetime.now(),
+                            raw_id=temp_raw_id
+                        )
+                        if image_result['success']:
+                            image_data = {
+                                'plate_image_path': image_result['plate_image_path'],
+                                'thumbnail_path': image_result['thumbnail_path'],
+                                'image_width': image_result['image_width'],
+                                'image_height': image_result['image_height'],
+                                'image_size': image_result['image_size']
+                            }
+                    except Exception as e:
+                        if getattr(settings, 'SHOW_DEBUG_INFO', False):
+                            self.sig_error.emit(f"Image save error: {e}")
+                
                 payload = {
                     'frame': None,
                     'tracks': [],
@@ -526,6 +555,7 @@ class FrameWorker(QObject):
                         'plate_img': plate_img,
                         'text': text,
                         'confidence': float(conf) if conf is not None else None,
+                        'image_data': image_data,
                     }],
                     'preview': False,
                     'frame_counter': frame_counter,

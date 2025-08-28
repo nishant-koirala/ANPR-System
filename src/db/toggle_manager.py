@@ -178,7 +178,8 @@ class ToggleManager:
     
     def log_vehicle_detection(self, plate_text: str, confidence: float,
                             raw_log_id: int, camera_id: int,
-                            session_id: Optional[str] = None) -> Optional[int]:
+                            session_id: Optional[str] = None,
+                            image_data: Optional[Dict] = None) -> Optional[int]:
         """
         Process detection and log to vehicle_log if appropriate
         
@@ -211,14 +212,15 @@ class ToggleManager:
                 time_diff = datetime.utcnow() - last_entry_time
                 duration_minutes = int(time_diff.total_seconds() / 60)
         
-        # Create vehicle log entry with duration included
+        # Create vehicle log entry with duration and image data included
         log_id = self.db.add_vehicle_log(
             plate_number=plate_text,
             toggle_mode=toggle_mode,
             raw_ref=raw_log_id,
             vehicle_id=vehicle_id,
             session_id=session_id,
-            duration_minutes=duration_minutes
+            duration_minutes=duration_minutes,
+            image_data=image_data
         )
         
         logger.info(f"Vehicle logged: {plate_text} - {toggle_mode.value} (log_id: {log_id})")

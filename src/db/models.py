@@ -3,14 +3,15 @@ Database models for ANPR System Phase 1: Core Logging
 Implements raw_logs and vehicle_log tables with toggle mode functionality
 """
 
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Enum, ForeignKey, Text
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Enum, ForeignKey, Text, Boolean
 from sqlalchemy.dialects.sqlite import INTEGER
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
 
-Base = declarative_base()
+# Import the shared Base from rbac_models to ensure consistency
+from .rbac_models import Base
 
 
 class ToggleMode(enum.Enum):
@@ -64,6 +65,13 @@ class RawLog(Base):
     captured_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     image_path = Column(String(255))  # Stored image snapshot (optional)
     
+    # Plate image storage fields
+    plate_image_path = Column(String(500))  # Cropped plate image path
+    thumbnail_path = Column(String(500))    # Thumbnail image path
+    image_width = Column(Integer)           # Plate image width
+    image_height = Column(Integer)          # Plate image height
+    image_size = Column(Integer)            # File size in bytes
+    
     # Additional metadata fields
     bbox_x = Column(Float)  # Bounding box coordinates
     bbox_y = Column(Float)
@@ -77,6 +85,32 @@ class RawLog(Base):
     
     def __repr__(self):
         return f"<RawLog(raw_id={self.raw_id}, plate_text='{self.plate_text}', confidence={self.confidence})>"
+
+
+# User model moved to rbac_models.py to avoid conflicts
+# Import User from rbac_models when needed
+
+
+class PlateEditHistory(Base):
+    """Audit trail for plate number edits"""
+    __tablename__ = 'plate_edit_history'
+    
+    edit_id = Column(Integer, primary_key=True, autoincrement=True)
+    log_id = Column(Integer, ForeignKey('vehicle_log.log_id'), nullable=False, index=True)
+    old_plate_number = Column(String(20), nullable=False)
+    new_plate_number = Column(String(20), nullable=False)
+    edited_by = Column(Integer, ForeignKey('users.user_id'), nullable=False, index=True)
+    edited_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    edit_reason = Column(Text)
+    ip_address = Column(String(45))  # Support IPv4 and IPv6
+    user_agent = Column(Text)
+    
+    # Relationships
+    vehicle_log = relationship("VehicleLog", back_populates="edit_history")
+    editor = relationship("User", back_populates="edit_history")
+    
+    def __repr__(self):
+        return f"<PlateEditHistory(edit_id={self.edit_id}, old='{self.old_plate_number}', new='{self.new_plate_number}')>"
 
 
 class VehicleLog(Base):
@@ -99,9 +133,25 @@ class VehicleLog(Base):
     location_info = Column(String(255))  # Additional location context
     notes = Column(Text)  # Any additional notes or flags
     
+    # Plate editing fields
+    original_plate_number = Column(String(20))  # Original OCR result before editing
+    is_edited = Column(Boolean, default=False)  # Flag indicating if plate was edited
+    edited_by = Column(Integer, ForeignKey('users.user_id'), nullable=True)  # User who edited
+    edited_at = Column(DateTime, nullable=True)  # When the edit was made
+    edit_reason = Column(Text)  # Reason for the edit
+    
+    # Plate image fields
+    plate_image_path = Column(String(500))  # Path to full plate image
+    thumbnail_path = Column(String(500))  # Path to thumbnail image
+    image_width = Column(Integer)  # Image width in pixels
+    image_height = Column(Integer)  # Image height in pixels
+    image_size = Column(Integer)  # File size in bytes
+    
     # Relationships
     vehicle = relationship("Vehicle", back_populates="vehicle_logs")
     raw_log = relationship("RawLog", back_populates="vehicle_logs")
+    editor = relationship("User", back_populates="edited_logs", foreign_keys=[edited_by])
+    edit_history = relationship("PlateEditHistory", back_populates="vehicle_log")
     
     def __repr__(self):
         return f"<VehicleLog(log_id={self.log_id}, plate_number='{self.plate_number}', toggle_mode={self.toggle_mode.value})>"
@@ -115,3 +165,12 @@ Index('idx_raw_logs_camera_time', RawLog.camera_id, RawLog.captured_at)
 Index('idx_raw_logs_plate_time', RawLog.plate_text, RawLog.captured_at)
 Index('idx_vehicle_log_plate_toggle', VehicleLog.plate_number, VehicleLog.toggle_mode)
 Index('idx_vehicle_log_time_toggle', VehicleLog.captured_at, VehicleLog.toggle_mode)
+
+# New indexes for enhanced functionality
+Index('idx_raw_logs_plate_image', RawLog.plate_image_path)
+Index('idx_vehicle_log_edited', VehicleLog.is_edited)
+Index('idx_vehicle_log_editor', VehicleLog.edited_by)
+Index('idx_edit_history_log', PlateEditHistory.log_id)
+Index('idx_edit_history_user', PlateEditHistory.edited_by)
+Index('idx_edit_history_date', PlateEditHistory.edited_at)
+# User index moved to rbac_models.py
