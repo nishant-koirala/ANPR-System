@@ -8,13 +8,18 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLa
                            QTableWidgetItem, QHeaderView, QGroupBox, QSplitter, QProgressBar,
                            QMessageBox, QFileDialog, QMenu, QAction)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDate
-from PyQt5.QtGui import QFont, QPixmap, QIcon
+from PyQt5.QtGui import QFont, QPixmap, QIcon, QColor
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import and_, or_, desc
 from datetime import datetime, timedelta
 import traceback
-from PyQt5.QtGui import QColor
 import os
+
+# Import database models
+try:
+    from src.db.models import VehicleLog, RawLog, Camera, ToggleMode
+except ImportError:
+    print("Warning: Database models not available")
 
 class SearchThread(QThread):
     """Background thread for database search operations"""
@@ -303,7 +308,7 @@ class SearchPlatePage(QWidget):
         
     def setup_connections(self):
         """Setup signal connections"""
-        self.search_button.clicked.connect(self.start_search)
+        self.search_button.clicked.connect(self.perform_search)
         self.clear_button.clicked.connect(self.clear_form)
         self.export_button.clicked.connect(self.export_results)
         self.results_table.cellDoubleClicked.connect(self.on_cell_double_clicked)
@@ -453,12 +458,97 @@ class SearchPlatePage(QWidget):
             # Actions button
             actions_widget = self.create_actions_widget(result)
             self.results_table.setCellWidget(row, 7, actions_widget)
+    
+    def create_actions_widget(self, result):
+        """Create actions widget for table row"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # View details button
+        view_btn = QPushButton("👁️")
+        view_btn.setToolTip("View Details")
+        view_btn.setMaximumSize(30, 30)
+        view_btn.clicked.connect(lambda: self.view_details(result))
+        
+        # Edit button
+        edit_btn = QPushButton("✏️")
+        edit_btn.setToolTip("Edit Plate")
+        edit_btn.setMaximumSize(30, 30)
+        edit_btn.clicked.connect(lambda: self.edit_plate(result))
+        
+        layout.addWidget(view_btn)
+        layout.addWidget(edit_btn)
+        layout.addStretch()
+        
+        return widget
+    
+    def on_cell_double_clicked(self, row, column):
+        """Handle double click on table cell"""
+        if row < len(self.current_results):
+            result = self.current_results[row]
+            if column == 1:  # Plate number column
+                self.edit_plate(result)
+            else:
+                self.view_details(result)
+    
+    def view_details(self, result):
+        """View detailed information for a result"""
+        details = f"""
+Plate Details:
+Log ID: {result['log_id']}
+Plate Number: {result['plate_number']}
+Original Plate: {result.get('original_plate_number', 'N/A')}
+Type: {result['toggle_mode']}
+Date/Time: {result['captured_at'].strftime('%Y-%m-%d %H:%M:%S') if result['captured_at'] else 'N/A'}
+Camera: {result['camera_name']}
+Duration: {result['duration_minutes']} minutes
+Location: {result.get('location_info', 'N/A')}
+Session ID: {result.get('session_id', 'N/A')}
+Confidence: {result.get('confidence', 'N/A')}
+
+Edit Information:
+Edited: {'Yes' if result.get('is_edited') else 'No'}
+Edited By: {result.get('edited_by', 'N/A')}
+Edited At: {result.get('edited_at', 'N/A')}
+Edit Reason: {result.get('edit_reason', 'N/A')}
+        """
+        
+        QMessageBox.information(self, f"Details - {result['plate_number']}", details.strip())
+    
+    def edit_plate(self, result):
+        """Edit plate number for a result"""
+        from PyQt5.QtWidgets import QInputDialog
+        
+        current_plate = result['plate_number']
+        new_plate, ok = QInputDialog.getText(
+            self, 
+            'Edit Plate Number', 
+            f'Edit plate number for Log ID {result["log_id"]}:',
+            text=current_plate
+        )
+        
+        if ok and new_plate.strip() and new_plate.strip() != current_plate:
+            # Here you would implement the database update logic
+            QMessageBox.information(self, "Edit Plate", 
+                                  f"Plate editing functionality needs to be connected to database.\n"
+                                  f"Would change '{current_plate}' to '{new_plate.strip()}'")
+            # TODO: Implement actual database update
             
-    def clear_search(self):
+    def clear_form(self):
         """Clear search form and results"""
         self.plate_search_edit.clear()
         self.toggle_mode_combo.setCurrentIndex(0)  # ALL
+        self.date_from_edit.setDate(QDate.currentDate().addDays(-30))
+        self.date_to_edit.setDate(QDate.currentDate())
+        self.results_table.setRowCount(0)
         self.current_results = []
+        self.results_info_label.setText("Enter search criteria and click Search to view results")
+        self.export_button.setEnabled(False)
+    
+    def clear_search(self):
+        """Legacy method - calls clear_form for compatibility"""
+        self.clear_form()
         
     def export_results(self):
         """Export search results to CSV"""

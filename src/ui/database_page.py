@@ -9,10 +9,12 @@ from datetime import datetime, timedelta
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLineEdit, QComboBox, QLabel, QDateEdit, QGroupBox,
-    QMessageBox, QHeaderView, QTabWidget, QTextEdit, QSpinBox
+    QMessageBox, QHeaderView, QTabWidget, QTextEdit, QSpinBox, QDialog,
+    QScrollArea
 )
 from PyQt5.QtCore import Qt, QDate, QTimer
 from PyQt5.QtGui import QFont, QPixmap
+import cv2
 
 # Add src to path for database imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
@@ -25,6 +27,248 @@ except ImportError as e:
     print(f"Database import error: {e}")
     # Fallback for when database is not available
     Database = None
+
+
+class PlateEditDialog(QDialog):
+    """Custom dialog for editing plate numbers with image display"""
+    
+    def __init__(self, parent, log_id, current_plate, image_path):
+        super().__init__(parent)
+        self.log_id = log_id
+        self.current_plate = current_plate
+        self.image_path = image_path
+        self.new_plate_text = current_plate
+        
+        self.setup_ui()
+        self.load_plate_image()
+    
+    def setup_ui(self):
+        """Setup the dialog UI"""
+        self.setWindowTitle(f"Edit Plate Number - Log ID {self.log_id}")
+        self.setModal(True)
+        self.resize(600, 400)
+        
+        layout = QVBoxLayout(self)
+        
+        # Title
+        title = QLabel(f"Edit Plate Number for Log ID {self.log_id}")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        
+        # Main content area
+        content_layout = QHBoxLayout()
+        
+        # Left side - Image display
+        image_group = QGroupBox("Plate Image")
+        image_layout = QVBoxLayout(image_group)
+        
+        # Scroll area for image
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumSize(300, 200)
+        
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setStyleSheet("border: 1px solid #ccc; background: white;")
+        self.image_label.setScaledContents(False)
+        
+        self.scroll_area.setWidget(self.image_label)
+        image_layout.addWidget(self.scroll_area)
+        
+        # Image controls
+        image_controls = QHBoxLayout()
+        self.zoom_in_btn = QPushButton("🔍 Zoom In")
+        self.zoom_out_btn = QPushButton("🔍 Zoom Out")
+        self.reset_zoom_btn = QPushButton("↻ Reset")
+        
+        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        self.reset_zoom_btn.clicked.connect(self.reset_zoom)
+        
+        image_controls.addWidget(self.zoom_in_btn)
+        image_controls.addWidget(self.zoom_out_btn)
+        image_controls.addWidget(self.reset_zoom_btn)
+        image_layout.addLayout(image_controls)
+        
+        content_layout.addWidget(image_group)
+        
+        # Right side - Edit controls
+        edit_group = QGroupBox("Edit Plate Number")
+        edit_layout = QVBoxLayout(edit_group)
+        
+        # Current plate display
+        current_label = QLabel("Current Plate:")
+        current_label.setFont(QFont("Arial", 10, QFont.Bold))
+        edit_layout.addWidget(current_label)
+        
+        self.current_plate_display = QLabel(self.current_plate)
+        self.current_plate_display.setStyleSheet("""
+            padding: 8px; 
+            background: #f8f9fa; 
+            border: 1px solid #dee2e6; 
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+        """)
+        edit_layout.addWidget(self.current_plate_display)
+        
+        edit_layout.addWidget(QLabel(""))  # Spacer
+        
+        # New plate input
+        new_label = QLabel("New Plate Number:")
+        new_label.setFont(QFont("Arial", 10, QFont.Bold))
+        edit_layout.addWidget(new_label)
+        
+        self.plate_input = QLineEdit(self.current_plate)
+        self.plate_input.setStyleSheet("""
+            padding: 8px; 
+            border: 2px solid #007bff; 
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+        """)
+        self.plate_input.textChanged.connect(self.on_text_changed)
+        edit_layout.addWidget(self.plate_input)
+        
+        # Validation message
+        self.validation_label = QLabel("")
+        self.validation_label.setStyleSheet("color: #dc3545; font-size: 12px;")
+        edit_layout.addWidget(self.validation_label)
+        
+        edit_layout.addStretch()
+        
+        content_layout.addWidget(edit_group)
+        layout.addLayout(content_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.save_btn = QPushButton("💾 Save Changes")
+        self.save_btn.setStyleSheet("""
+            QPushButton {
+                background: #28a745; 
+                color: white; 
+                padding: 10px 20px; 
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #218838;
+            }
+        """)
+        self.save_btn.clicked.connect(self.accept)
+        
+        cancel_btn = QPushButton("❌ Cancel")
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: #6c757d; 
+                color: white; 
+                padding: 10px 20px; 
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #5a6268;
+            }
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(self.save_btn)
+        
+        layout.addLayout(button_layout)
+        
+        # Set focus to input field
+        self.plate_input.setFocus()
+        self.plate_input.selectAll()
+        
+        # Initialize zoom
+        self.zoom_factor = 1.0
+        self.original_pixmap = None
+    
+    def load_plate_image(self):
+        """Load and display the plate image"""
+        try:
+            if not self.image_path or not os.path.exists(self.image_path):
+                # Show placeholder if no image
+                self.image_label.setText("No plate image available")
+                self.image_label.setStyleSheet("""
+                    border: 2px dashed #ccc; 
+                    background: #f8f9fa; 
+                    color: #6c757d;
+                    font-size: 14px;
+                    min-height: 100px;
+                """)
+                return
+            
+            # Load image using OpenCV for better handling
+            image = cv2.imread(self.image_path)
+            if image is None:
+                self.image_label.setText("Failed to load plate image")
+                return
+            
+            # Convert BGR to RGB
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Convert to QPixmap
+            height, width, channel = image_rgb.shape
+            bytes_per_line = 3 * width
+            from PyQt5.QtGui import QImage
+            q_image = QImage(image_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            
+            self.original_pixmap = QPixmap.fromImage(q_image)
+            self.update_image_display()
+            
+        except Exception as e:
+            print(f"Error loading plate image: {e}")
+            self.image_label.setText(f"Error loading image: {e}")
+    
+    def update_image_display(self):
+        """Update image display with current zoom"""
+        if self.original_pixmap:
+            scaled_pixmap = self.original_pixmap.scaled(
+                self.original_pixmap.size() * self.zoom_factor,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            self.image_label.resize(scaled_pixmap.size())
+    
+    def zoom_in(self):
+        """Zoom in on the image"""
+        self.zoom_factor = min(self.zoom_factor * 1.5, 5.0)
+        self.update_image_display()
+    
+    def zoom_out(self):
+        """Zoom out on the image"""
+        self.zoom_factor = max(self.zoom_factor / 1.5, 0.2)
+        self.update_image_display()
+    
+    def reset_zoom(self):
+        """Reset zoom to original size"""
+        self.zoom_factor = 1.0
+        self.update_image_display()
+    
+    def on_text_changed(self, text):
+        """Handle text input changes"""
+        self.new_plate_text = text.strip()
+        
+        # Basic validation
+        if not self.new_plate_text:
+            self.validation_label.setText("⚠️ Plate number cannot be empty")
+            self.save_btn.setEnabled(False)
+        elif self.new_plate_text == self.current_plate:
+            self.validation_label.setText("ℹ️ No changes made")
+            self.save_btn.setEnabled(False)
+        else:
+            self.validation_label.setText("✅ Ready to save")
+            self.save_btn.setEnabled(True)
+    
+    def get_new_plate_text(self):
+        """Get the new plate text"""
+        return self.new_plate_text
 
 
 class DatabasePage(QWidget):
@@ -594,7 +838,7 @@ class DatabasePage(QWidget):
             self.edit_plate_number(row)
     
     def edit_plate_number(self, row):
-        """Edit plate number for the selected row"""
+        """Edit plate number for the selected row with image display"""
         try:
             # Get log_id from the first column
             log_id_item = self.vehicle_table.item(row, 0)
@@ -610,20 +854,40 @@ class DatabasePage(QWidget):
                 
             current_plate = plate_item.text()
             
-            # Show input dialog for new plate number
-            from PyQt5.QtWidgets import QInputDialog
-            new_plate, ok = QInputDialog.getText(
-                self, 
-                'Edit Plate Number', 
-                f'Edit plate number for Log ID {log_id}:',
-                text=current_plate
-            )
+            # Get plate image path from database
+            plate_image_path = self.get_plate_image_path(log_id)
             
-            if ok and new_plate.strip() and new_plate.strip() != current_plate:
-                self.update_plate_number(log_id, current_plate, new_plate.strip(), row)
+            # Show custom dialog with image and text input
+            dialog = PlateEditDialog(self, log_id, current_plate, plate_image_path)
+            if dialog.exec_() == QDialog.Accepted:
+                new_plate = dialog.get_new_plate_text()
+                if new_plate and new_plate.strip() != current_plate:
+                    self.update_plate_number(log_id, current_plate, new_plate.strip(), row)
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to edit plate number: {e}")
+    
+    def get_plate_image_path(self, log_id):
+        """Get plate image path for the given log_id"""
+        try:
+            if not self.db:
+                return None
+                
+            with self.db.get_session() as session:
+                vehicle_log = session.query(VehicleLog).filter(VehicleLog.log_id == log_id).first()
+                if vehicle_log and vehicle_log.plate_image_path:
+                    return vehicle_log.plate_image_path
+                    
+                # If no image in vehicle_log, try raw_log
+                if vehicle_log and vehicle_log.raw_ref:
+                    raw_log = session.query(RawLog).filter(RawLog.raw_id == vehicle_log.raw_ref).first()
+                    if raw_log and raw_log.plate_image_path:
+                        return raw_log.plate_image_path
+                        
+        except Exception as e:
+            print(f"Error getting plate image path: {e}")
+            
+        return None
     
     def update_plate_number(self, log_id, old_plate, new_plate, row):
         """Update plate number in database and table"""
