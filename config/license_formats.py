@@ -43,15 +43,7 @@ class Format1(LicenseFormat):
         # Clean text first
         clean_text = text.replace(' ', '').replace('\n', '').upper()
         
-        # Allow 4-7 characters for flexibility
-        if len(clean_text) < 4 or len(clean_text) > 7:
-            return False
-        
-        # If it's just 4 digits, accept it (partial plate)
-        if len(clean_text) == 4 and clean_text.isdigit():
-            return True
-        
-        # If it's not exactly 7 characters, reject for full format
+        # Must be exactly 7 characters
         if len(clean_text) != 7:
             return False
         
@@ -67,10 +59,6 @@ class Format1(LicenseFormat):
     
     def format_text(self, text):
         """Format text for Format 1"""
-        # Handle 4-digit partial plates
-        if len(text) == 4 and text.isdigit():
-            return text  # Return as-is for partial plates
-        
         if len(text) != 7:
             return text
             
@@ -99,7 +87,7 @@ class Format1(LicenseFormat):
         return str(text).upper().replace(' ', '')
 
 class Format2(LicenseFormat):
-    """Format 2: AA 1111 - New Nepali format (exactly 4 digits)"""
+    """Format 2: AA 1111 - Two letters and four numbers"""
     
     def __init__(self):
         super().__init__(
@@ -113,14 +101,6 @@ class Format2(LicenseFormat):
         """Validate Format 2: AA 1111 (exactly 2 letters + 4 digits)"""
         # Remove spaces and newlines for validation
         clean_text = text.replace(' ', '').replace('\n', '').upper()
-        
-        # Allow 4-6 characters for flexibility
-        if len(clean_text) < 4 or len(clean_text) > 6:
-            return False
-        
-        # If it's just 4 digits, accept it (partial plate)
-        if len(clean_text) == 4 and clean_text.isdigit():
-            return True
         
         # Must be exactly 6 characters (AA + 1111)
         if len(clean_text) != 6:
@@ -142,10 +122,6 @@ class Format2(LicenseFormat):
         """Format text for Format 2"""
         # Clean and validate
         clean_text = text.replace(' ', '').replace('\n', '')
-        
-        # Handle 4-digit partial plates
-        if len(clean_text) == 4 and clean_text.isdigit():
-            return clean_text  # Return as-is for partial plates
         
         if len(clean_text) != 6:
             return text
@@ -171,10 +147,72 @@ class Format2(LicenseFormat):
         """Clean text for Format 2 - keep spaces and newlines"""
         return str(text).upper()
 
+class Format3(LicenseFormat):
+    """Format 3: A AA 1111 - Three letters and four numbers"""
+    
+    def __init__(self):
+        super().__init__(
+            name="format3",
+            description="A AA 1111",
+            length=7,  # Exactly 7 characters (3 letters + 4 digits)
+            pattern="LLLDDDD"
+        )
+    
+    def validate(self, text):
+        """Validate Format 3: A AA 1111 (exactly 3 letters + 4 digits)"""
+        # Remove spaces and newlines for validation
+        clean_text = text.replace(' ', '').replace('\n', '').upper()
+        
+        # Must be exactly 7 characters (AAA + 1111)
+        if len(clean_text) != 7:
+            return False
+        
+        # First 3 must be letters (allow common OCR substitutions)
+        for i in range(3):
+            if not (clean_text[i] in string.ascii_uppercase or clean_text[i] in INT_TO_CHAR.keys()):
+                return False
+        
+        # Last 4 must be digits (allow common OCR substitutions)
+        for i in range(3, 7):
+            if not (clean_text[i] in '0123456789' or clean_text[i] in CHAR_TO_INT.keys()):
+                return False
+        
+        return True
+    
+    def format_text(self, text):
+        """Format text for Format 3"""
+        # Clean and validate
+        clean_text = text.replace(' ', '').replace('\n', '')
+        
+        if len(clean_text) != 7:
+            return text
+        
+        license_plate_ = ''
+        # Apply character mapping for each position
+        for i, char in enumerate(clean_text):
+            if i < 3:  # Letters
+                if char in INT_TO_CHAR:
+                    license_plate_ += INT_TO_CHAR[char]
+                else:
+                    license_plate_ += char
+            else:  # Digits
+                if char in CHAR_TO_INT:
+                    license_plate_ += CHAR_TO_INT[char]
+                else:
+                    license_plate_ += char
+        
+        # Format as A AA 1111
+        return f"{license_plate_[0]} {license_plate_[1:3]} {license_plate_[3:]}"
+    
+    def clean_text(self, text):
+        """Clean text for Format 3 - keep spaces and newlines"""
+        return str(text).upper()
+
 # Format registry
 LICENSE_FORMATS = {
     'format1': Format1(),
-    'format2': Format2()
+    'format2': Format2(),
+    'format3': Format3()
 }
 
 def get_format(format_name):
@@ -210,5 +248,6 @@ def clean_text_for_format(text, format_name):
 FORMAT_DISPLAY_NAMES = {
     'format1': "Format 1: AA00AAA (7 characters)",
     'format2': "Format 2: AA 1111 (6 characters)",
-    'auto': "Automatic: Try both formats"
+    'format3': "Format 3: A AA 1111 (7 characters)",
+    'auto': "Automatic: Try all formats"
 }

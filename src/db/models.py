@@ -130,6 +130,8 @@ class VehicleLog(Base):
     # Additional tracking fields
     session_id = Column(String(50))  # To group related entry/exit events
     duration_minutes = Column(Integer)  # For EXIT records, duration since ENTRY
+    duration_hours = Column(Float)  # For EXIT records, duration in hours (calculated from minutes)
+    amount = Column(Float)  # Calculated amount based on duration and hourly rate
     location_info = Column(String(255))  # Additional location context
     notes = Column(Text)  # Any additional notes or flags
     

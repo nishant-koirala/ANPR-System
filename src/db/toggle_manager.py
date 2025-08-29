@@ -206,11 +206,19 @@ class ToggleManager:
         
         # Calculate duration for EXIT records
         duration_minutes = None
+        duration_hours = None
+        amount = None
         if toggle_mode == ToggleMode.EXIT:
             last_entry_time = self._get_last_entry_time(plate_text)
             if last_entry_time:
                 time_diff = datetime.utcnow() - last_entry_time
                 duration_minutes = int(time_diff.total_seconds() / 60)
+                duration_hours = round(duration_minutes / 60.0, 2)  # Convert to hours with 2 decimal places
+                
+                # Calculate amount based on hourly rate
+                from config.settings import PARKING_HOURLY_RATE, MINIMUM_CHARGE_HOURS
+                charge_hours = max(duration_hours, MINIMUM_CHARGE_HOURS)  # Minimum 1 hour charge
+                amount = round(charge_hours * PARKING_HOURLY_RATE, 2)
         
         # Create vehicle log entry with duration and image data included
         log_id = self.db.add_vehicle_log(
@@ -220,6 +228,8 @@ class ToggleManager:
             vehicle_id=vehicle_id,
             session_id=session_id,
             duration_minutes=duration_minutes,
+            duration_hours=duration_hours,
+            amount=amount,
             image_data=image_data
         )
         

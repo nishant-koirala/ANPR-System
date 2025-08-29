@@ -6,6 +6,18 @@ PLATE_MODEL_PATH = "models/best.pt"
 VEHICLE_MODEL_TYPE = "yolov8m"  # Available: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x
 VEHICLE_MODEL_PATH = "yolov8m.pt"
 
+# Available plate detection models
+AVAILABLE_PLATE_MODELS = ["best.pt"]
+
+# License plate format selection
+DEFAULT_LICENSE_FORMAT = "auto"  # Options: format1, format2, format3, auto
+AVAILABLE_LICENSE_FORMATS = {
+    "format1": "Format 1: AA00AAA (7 characters)",
+    "format2": "Format 2: AA 1111 (6 characters)", 
+    "format3": "Format 3: A AA 1111 (7 characters)",
+    "auto": "Automatic: Try all formats"
+}
+
 # Model inference settings
 MODEL_IMAGE_SIZE = 256  # YOLO model input image size (reduced for faster inference)
 MODEL_VERBOSE = False   # YOLO model verbose output
@@ -27,8 +39,9 @@ VEHICLE_CLASSES = {
 
 # ===== Video Processing Settings =====
 # Frame processing
-DEFAULT_FRAME_SKIP = 2             # Process every N frames to improve performance (increased from 1)
-DEFAULT_DETECTION_INTERVAL = 2     # Run detection every N processed frames (increased from 1)
+DEFAULT_FRAME_SKIP = 1             # Process every N frames to improve performance (increased from 1)
+DEFAULT_DETECTION_INTERVAL = 1     # Run detection every N processed frames (increased from 1)
+FRAME_SKIP_OPTIONS = [1, 2, 3, 4, 5, 10]  # Available frame skip options for UI
 VIDEO_FPS = 30                     # Target frames per second for video processing
 MAX_FRAME_WIDTH = 1280             # Maximum width for processing (maintains aspect ratio)
 MAX_FRAME_HEIGHT = 720             # Maximum height for processing (maintains aspect ratio)
@@ -47,7 +60,8 @@ MIN_DETECTIONS_FOR_FINAL = 3       # Minimum number of detections before conside
 CONFIDENCE_THRESHOLD_FINAL = 0.7   # Minimum confidence threshold to consider a plate as final
 
 # ===== OCR Settings =====
-OCR_LANGUAGES = ['en']              # Languages for OCR
+OCR_LANGUAGES = ['en', 'ne']        # Languages for OCR (English and Nepali only)
+AVAILABLE_OCR_LANGUAGES = ['en', 'ne']  # Available language options
 OCR_GPU_ENABLED = True              # Enable/disable GPU acceleration for OCR
 OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -"  # Allowed characters in license plates
 
@@ -114,3 +128,8 @@ MAX_CANDIDATES_PER_VEHICLE = 5
 # Debug settings
 DEBUG_SAVE_IMAGES = True
 DEBUG_OCR_VERBOSE = True
+
+# ===== Parking Fee Settings =====
+# Hourly rate for parking fee calculation (in NPR)
+PARKING_HOURLY_RATE = 50.0  # 50 NPR per hour
+MINIMUM_CHARGE_HOURS = 1.0  # Minimum charge for 1 hour even for shorter durations

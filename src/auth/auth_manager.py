@@ -27,6 +27,7 @@ class AuthManager:
         self.get_session = db_session_factory
         self.current_user = None
         self.current_session = None
+        self.current_username = None  # Store username to avoid detached instance issues
         
     # Authentication Methods
     
@@ -114,6 +115,7 @@ class AuthManager:
             # Set current user and session
             self.current_user = user
             self.current_session = user_session
+            self.current_username = user.username  # Store username separately
             
             # Log successful login
             self._log_audit(user_data['user_id'], "LOGIN_SUCCESS", ip_address=ip_address)
@@ -127,9 +129,18 @@ class AuthManager:
     def logout(self, session_id: str = None) -> bool:
         """Logout user and invalidate session"""
         if not session_id and self.current_session:
-            session_id = self.current_session.session_id
+            try:
+                session_id = self.current_session.session_id
+            except Exception:
+                # Handle detached session - clear current session and return
+                self.current_user = None
+                self.current_session = None
+                return True
         
         if not session_id:
+            # Clear current user/session even if no session_id
+            self.current_user = None
+            self.current_session = None
             return False
         
         with self.get_session() as session:
@@ -223,8 +234,15 @@ class AuthManager:
         if not self.current_user:
             raise AuthorizationError("Not authenticated")
         
-        if not self.has_permission(self.current_user.user_id, permission_name):
-            self._log_audit(self.current_user.user_id, "ACCESS_DENIED", 
+        try:
+            # Get user ID safely to avoid detached instance issues
+            user_id = self.current_user.user_id
+        except Exception:
+            # If we can't access user_id due to detached session, re-authenticate
+            raise AuthorizationError("Session expired - please log in again")
+        
+        if not self.has_permission(user_id, permission_name):
+            self._log_audit(user_id, "ACCESS_DENIED", 
                           details=f"Missing permission: {permission_name}", success=False)
             raise AuthorizationError(f"Permission denied: {permission_name}")
     
@@ -233,8 +251,15 @@ class AuthManager:
         if not self.current_user:
             raise AuthorizationError("Not authenticated")
         
-        if not self.has_role(self.current_user.user_id, role_name):
-            self._log_audit(self.current_user.user_id, "ACCESS_DENIED", 
+        try:
+            # Get user ID safely to avoid detached instance issues
+            user_id = self.current_user.user_id
+        except Exception:
+            # If we can't access user_id due to detached session, re-authenticate
+            raise AuthorizationError("Session expired - please log in again")
+        
+        if not self.has_role(user_id, role_name):
+            self._log_audit(user_id, "ACCESS_DENIED", 
                           details=f"Missing role: {role_name}", success=False)
             raise AuthorizationError(f"Role required: {role_name}")
     
@@ -249,7 +274,17 @@ class AuthManager:
             # Skip permission check if no current user (initial setup)
             if self.current_user:
                 try:
-                    self.require_permission("MANAGE_USERS")
+                    # Store user_id in a variable to avoid repeated access to detached object
+                    current_user_id = None
+                    with self.get_session() as session:
+                        # Re-query the current user to get a fresh session-bound instance
+                        fresh_user = session.query(User).filter(User.username == self.current_username).first()
+                        if fresh_user:
+                            current_user_id = fresh_user.user_id
+                    
+                    if current_user_id and not self.has_permission(current_user_id, "MANAGE_USERS"):
+                        raise AuthorizationError("Permission denied: MANAGE_USERS")
+                    print(f"DEBUG: Permission check passed for user ID: {current_user_id}")
                 except Exception as e:
                     print(f"DEBUG: Permission check failed: {e}")
                     raise
@@ -277,13 +312,16 @@ class AuthManager:
                 
                 # Create new user
                 password_hash = self.hash_password(password)
+                # Use the current_user_id we already retrieved safely
+                created_by_id = current_user_id if self.current_user else None
+                
                 new_user = User(
                     username=username,
                     password_hash=password_hash,
                     email=email,
                     full_name=full_name,
                     status=user_status,
-                    created_by=self.current_user.user_id if self.current_user else None
+                    created_by=created_by_id
                 )
                 session.add(new_user)
                 session.flush()
@@ -302,7 +340,7 @@ class AuthManager:
                             user_role = UserRole(
                                 user_id=user_id,
                                 role_id=role.role_id,
-                                assigned_by=self.current_user.user_id if self.current_user else None
+                                assigned_by=created_by_id
                             )
                             session.add(user_role)
                         else:
@@ -311,7 +349,7 @@ class AuthManager:
                 session.commit()
                 print("DEBUG: Transaction committed successfully")
                 
-                self._log_audit(self.current_user.user_id if self.current_user else None, 
+                self._log_audit(created_by_id, 
                               "CREATE_USER", "USER", str(user_id), 
                               details=f"Created user: {username}")
                 

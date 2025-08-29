@@ -221,6 +221,12 @@ class ANPRApplication(PlateDetectorDashboard):
                                 self.add_detection_to_table(continuous_id, final_plate_text, final_confidence, plate_img)
                                 vehicles_with_plates.add(continuous_id)
                                 
+                                # Add vehicle to log display
+                                try:
+                                    self.add_vehicle_to_log(continuous_id, final_plate_text, plate_img, "PRESENT")
+                                except Exception as e:
+                                    print(f"Error adding vehicle to log display: {e}")
+                                
                                 print(f"DEBUG: About to start database logging for {final_plate_text}")
                                 # Log to database with image data
                                 try:
@@ -284,7 +290,7 @@ class ANPRApplication(PlateDetectorDashboard):
 
             # Show processed frame if requested
             if preview and (show_img is not None):
-                self.update_ui_counters()
+                pass  # UI counters already updated above
 
         except Exception as e:
             print(f"on_worker_frame_processed error: {e}")

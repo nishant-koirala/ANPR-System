@@ -520,6 +520,30 @@ class PlateDetectorDashboard(QWidget):
                 db = get_database()
                 self.auth_manager = AuthManager(db.get_session)
             
+            # Check if user is logged in and has proper permissions
+            if not self.auth_manager.current_user:
+                # Create a login prompt page
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                
+                login_label = QLabel("🔐 Authentication Required")
+                login_label.setFont(QFont("Arial", 16, QFont.Bold))
+                login_label.setAlignment(Qt.AlignCenter)
+                
+                message_label = QLabel("Please log in to access User Management")
+                message_label.setAlignment(Qt.AlignCenter)
+                
+                login_button = QPushButton("Login")
+                login_button.clicked.connect(self.show_login_dialog)
+                
+                layout.addStretch()
+                layout.addWidget(login_label)
+                layout.addWidget(message_label)
+                layout.addWidget(login_button)
+                layout.addStretch()
+                
+                return page
+            
             return UserManagementPage(self.auth_manager)
         except ImportError as e:
             # Fallback if user management page can't be imported
@@ -536,6 +560,9 @@ class PlateDetectorDashboard(QWidget):
             error_label = QLabel(f"User Management error: {e}")
             error_label.setAlignment(Qt.AlignCenter)
             layout.addWidget(error_label)
+            print(f"DEBUG: User Management build error: {e}")
+            import traceback
+            traceback.print_exc()
             return page
 
     def build_dashboard_page(self):
@@ -698,6 +725,69 @@ class PlateDetectorDashboard(QWidget):
         counter_layout.addStretch()
         content_layout.addLayout(counter_layout)
         
+        # Vehicle Log Table
+        vehicle_log_group = QGroupBox("🚗 Vehicle Status Log")
+        vehicle_log_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-size: 14px;
+                color: #2c3e50;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                margin: 10px 0px;
+                padding-top: 15px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 10px 0 10px;
+            }
+        """)
+        vehicle_log_layout = QVBoxLayout(vehicle_log_group)
+        
+        # Create vehicle log table
+        self.vehicle_log_table = QTableWidget()
+        self.vehicle_log_table.setColumnCount(4)
+        self.vehicle_log_table.setHorizontalHeaderLabels(["ID", "Plate Image", "Plate Number", "Status"])
+        self.vehicle_log_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.vehicle_log_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.vehicle_log_table.setAlternatingRowColors(True)
+        self.vehicle_log_table.setFixedHeight(200)
+        
+        # Set column widths
+        self.vehicle_log_table.setColumnWidth(0, 60)   # ID column
+        self.vehicle_log_table.setColumnWidth(1, 120)  # Image column
+        self.vehicle_log_table.setColumnWidth(2, 150)  # Plate number column
+        self.vehicle_log_table.setColumnWidth(3, 100)  # Status column
+        
+        # Style the table
+        self.vehicle_log_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                gridline-color: #e0e0e0;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #f0f0f0;
+            }
+            QTableWidget::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+            QHeaderView::section {
+                background-color: #34495e;
+                color: white;
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+            }
+        """)
+        
+        vehicle_log_layout.addWidget(self.vehicle_log_table)
+        content_layout.addWidget(vehicle_log_group)
+        
         # Results table
         self.table = QTableWidget()
         self.table.setColumnCount(7)
@@ -705,6 +795,116 @@ class PlateDetectorDashboard(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         return page
+
+    def add_vehicle_to_log(self, vehicle_id, plate_text, plate_img, status="PRESENT"):
+        """Add or update vehicle in the vehicle log table"""
+        try:
+            # Check if vehicle already exists in table
+            for row in range(self.vehicle_log_table.rowCount()):
+                id_item = self.vehicle_log_table.item(row, 0)
+                if id_item and id_item.text() == f"V{vehicle_id}":
+                    # Update existing vehicle
+                    self.update_vehicle_log_entry(row, vehicle_id, plate_text, plate_img, status)
+                    return
+            
+            # Add new vehicle to table
+            self.create_vehicle_log_entry(vehicle_id, plate_text, plate_img, status)
+        except Exception as e:
+            print(f"Error adding vehicle to log: {e}")
+
+    def create_vehicle_log_entry(self, vehicle_id, plate_text, plate_img, status):
+        """Create a new vehicle log entry in the table"""
+        try:
+            row = self.vehicle_log_table.rowCount()
+            self.vehicle_log_table.insertRow(row)
+            self.vehicle_log_table.setRowHeight(row, 60)
+            
+            # Column 0: Vehicle ID
+            id_item = QTableWidgetItem(f"V{vehicle_id}")
+            id_item.setTextAlignment(Qt.AlignCenter)
+            id_item.setFont(QFont("Arial", 10, QFont.Bold))
+            self.vehicle_log_table.setItem(row, 0, id_item)
+            
+            # Column 1: Plate Image
+            plate_label = QLabel()
+            if plate_img is not None:
+                try:
+                    plate_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
+                    h, w, ch = plate_rgb.shape
+                    bytes_per_line = ch * w
+                    qt_img = QImage(plate_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                    plate_pixmap = QPixmap.fromImage(qt_img).scaled(100, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    plate_label.setPixmap(plate_pixmap)
+                except:
+                    plate_label.setText("No Image")
+                    plate_label.setStyleSheet("background-color: #f8f9fa; color: #6c757d;")
+            else:
+                plate_label.setText("No Image")
+                plate_label.setStyleSheet("background-color: #f8f9fa; color: #6c757d;")
+            
+            plate_label.setAlignment(Qt.AlignCenter)
+            self.vehicle_log_table.setCellWidget(row, 1, plate_label)
+            
+            # Column 2: Plate Number
+            plate_item = QTableWidgetItem(plate_text if plate_text else "Unknown")
+            plate_item.setTextAlignment(Qt.AlignCenter)
+            plate_item.setFont(QFont("Arial", 10))
+            self.vehicle_log_table.setItem(row, 2, plate_item)
+            
+            # Column 3: Status
+            status_label = QLabel()
+            if status == "PRESENT":
+                status_label.setText("🟢 PRESENT")
+                status_label.setStyleSheet("color: #28a745; font-weight: bold;")
+            else:
+                status_label.setText("🔴 EXITED")
+                status_label.setStyleSheet("color: #dc3545; font-weight: bold;")
+            status_label.setAlignment(Qt.AlignCenter)
+            self.vehicle_log_table.setCellWidget(row, 3, status_label)
+            
+        except Exception as e:
+            print(f"Error creating vehicle log entry: {e}")
+
+    def update_vehicle_log_entry(self, row, vehicle_id, plate_text, plate_img, status):
+        """Update an existing vehicle log entry in the table"""
+        try:
+            # Update plate image
+            plate_label = self.vehicle_log_table.cellWidget(row, 1)
+            if plate_label and plate_img is not None:
+                try:
+                    plate_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
+                    h, w, ch = plate_rgb.shape
+                    bytes_per_line = ch * w
+                    qt_img = QImage(plate_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                    plate_pixmap = QPixmap.fromImage(qt_img).scaled(100, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    plate_label.setPixmap(plate_pixmap)
+                except:
+                    pass
+            
+            # Update plate text
+            plate_item = self.vehicle_log_table.item(row, 2)
+            if plate_item:
+                plate_item.setText(plate_text if plate_text else "Unknown")
+            
+            # Update status
+            status_label = self.vehicle_log_table.cellWidget(row, 3)
+            if status_label:
+                if status == "PRESENT":
+                    status_label.setText("🟢 PRESENT")
+                    status_label.setStyleSheet("color: #28a745; font-weight: bold;")
+                else:
+                    status_label.setText("🔴 EXITED")
+                    status_label.setStyleSheet("color: #dc3545; font-weight: bold;")
+                    
+        except Exception as e:
+            print(f"Error updating vehicle log entry: {e}")
+
+    def clear_vehicle_log(self):
+        """Clear all vehicles from the log table"""
+        try:
+            self.vehicle_log_table.setRowCount(0)
+        except Exception as e:
+            print(f"Error clearing vehicle log: {e}")
 
     def build_search_plate(self):
         """Build search plate page"""
@@ -745,18 +945,23 @@ class PlateDetectorDashboard(QWidget):
 
     def build_settings_page(self):
         """Build settings page"""
-        page = QWidget()
-        main_layout = QVBoxLayout(page)
+        try:
+            from .settings_page import SettingsPage
+            return SettingsPage(parent=self)
+        except ImportError as e:
+            # Fallback to simple settings page
+            page = QWidget()
+            main_layout = QVBoxLayout(page)
 
-        title = QLabel("Settings")
-        title.setFont(QFont("Arial", 18, QFont.Bold))
-        main_layout.addWidget(title)
+            title = QLabel("Settings")
+            title.setFont(QFont("Arial", 18, QFont.Bold))
+            main_layout.addWidget(title)
 
-        # Create scroll area for settings
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_content = QWidget()
-        layout = QVBoxLayout(scroll_content)
+            # Create scroll area for settings
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_content = QWidget()
+            layout = QVBoxLayout(scroll_content)
 
         # Camera Source
         cam_group = QGroupBox("Camera Source")
@@ -842,6 +1047,8 @@ class PlateDetectorDashboard(QWidget):
 
     def on_sidebar_changed(self, index):
         """Handle sidebar navigation"""
+        print(f"DEBUG: Sidebar changed to index: {index}")
+        
         if index == 0:  # Dashboard
             self.stack.setCurrentIndex(0)
         elif index == 1:  # Vehicle Log
@@ -853,20 +1060,128 @@ class PlateDetectorDashboard(QWidget):
         elif index == 4:  # Settings
             self.stack.setCurrentIndex(4)
         elif index == 5:  # Logout
+            print("DEBUG: Logout option selected")
             self.logout()
         else:  # Default to Dashboard
+            print(f"DEBUG: Unknown index {index}, defaulting to Dashboard")
             self.stack.setCurrentIndex(0)
 
     def logout(self):
         """Handle user logout"""
+        print("DEBUG: Logout method called")
+        
         reply = QMessageBox.question(self, "Logout", 
                                    "Are you sure you want to logout?",
                                    QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            if hasattr(self, 'auth_manager'):
-                self.auth_manager.logout()
-            self.close()
+            print("DEBUG: User confirmed logout")
+            if hasattr(self, 'auth_manager') and self.auth_manager:
+                try:
+                    self.auth_manager.logout()
+                    print("DEBUG: Auth manager logout successful")
+                except Exception as e:
+                    print(f"DEBUG: Auth manager logout error: {e}")
+            
+            # Reset sidebar to dashboard instead of closing
+            self.sidebar.setCurrentRow(0)
+            self.stack.setCurrentIndex(0)
+            print("DEBUG: Reset to dashboard after logout")
+        else:
+            print("DEBUG: User cancelled logout")
+            # Reset sidebar selection to previous item
+            self.sidebar.setCurrentRow(0)
+    
+    def show_login_dialog(self):
+        """Show login dialog for authentication"""
+        from PyQt5.QtWidgets import QDialog, QFormLayout, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Login - ANPR System")
+        dialog.setFixedSize(350, 200)
+        
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        
+        username_edit = QLineEdit()
+        username_edit.setPlaceholderText("Enter username")
+        
+        password_edit = QLineEdit()
+        password_edit.setEchoMode(QLineEdit.Password)
+        password_edit.setPlaceholderText("Enter password")
+        
+        form_layout.addRow("Username:", username_edit)
+        form_layout.addRow("Password:", password_edit)
+        
+        button_layout = QHBoxLayout()
+        login_btn = QPushButton("Login")
+        cancel_btn = QPushButton("Cancel")
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(login_btn)
+        
+        layout.addLayout(form_layout)
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+        
+        def attempt_login():
+            username = username_edit.text().strip()
+            password = password_edit.text()
+            
+            if not username or not password:
+                QMessageBox.warning(dialog, "Error", "Please enter both username and password")
+                return
+            
+            try:
+                user_data = self.auth_manager.login(username, password)
+                QMessageBox.information(dialog, "Success", f"Welcome, {user_data['full_name'] or username}!")
+                dialog.accept()
+                # Force rebuild of User Management page
+                self.rebuild_user_management_page()
+            except Exception as e:
+                QMessageBox.critical(dialog, "Login Failed", str(e))
+        
+        login_btn.clicked.connect(attempt_login)
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        # Allow Enter key to login
+        username_edit.returnPressed.connect(attempt_login)
+        password_edit.returnPressed.connect(attempt_login)
+        
+        dialog.exec_()
+    
+    def refresh_current_page(self):
+        """Refresh the current page after login"""
+        current_index = self.stack.currentIndex()
+        if current_index >= 0:
+            # Get current sidebar selection and refresh that page
+            current_row = self.sidebar.currentRow()
+            if current_row >= 0:
+                self.on_sidebar_changed(current_row)
+    
+    def rebuild_user_management_page(self):
+        """Rebuild User Management page after login"""
+        try:
+            # Remove the old page at index 2 (User Management)
+            old_widget = self.stack.widget(2)
+            if old_widget:
+                self.stack.removeWidget(old_widget)
+                old_widget.deleteLater()
+            
+            # Build new User Management page
+            user_management_page = self.build_user_management()
+            self.stack.insertWidget(2, user_management_page)
+            
+            # Switch to User Management page
+            self.sidebar.setCurrentRow(2)
+            self.stack.setCurrentIndex(2)
+            
+            print("DEBUG: User Management page rebuilt after login")
+            
+        except Exception as e:
+            print(f"DEBUG: Error rebuilding User Management page: {e}")
+            import traceback
+            traceback.print_exc()
 
     def apply_settings(self):
         """Apply settings changes"""

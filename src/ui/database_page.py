@@ -383,10 +383,10 @@ class DatabasePage(QWidget):
         
         # Vehicle logs table
         self.vehicle_table = QTableWidget()
-        self.vehicle_table.setColumnCount(8)
+        self.vehicle_table.setColumnCount(9)
         self.vehicle_table.setHorizontalHeaderLabels([
             "Log ID", "Plate Image", "Plate Number", "Toggle Mode", "Captured At", 
-            "Duration (min)", "Session ID", "Camera"
+            "Duration (hrs)", "Amount (NPR)", "Session ID", "Camera"
         ])
         
         # Set row height for images
@@ -550,9 +550,24 @@ class DatabasePage(QWidget):
                     self.vehicle_table.setItem(row, 2, QTableWidgetItem(log.plate_number))
                     self.vehicle_table.setItem(row, 3, QTableWidgetItem(log.toggle_mode.value))
                     self.vehicle_table.setItem(row, 4, QTableWidgetItem(log.captured_at.strftime("%Y-%m-%d %H:%M:%S")))
-                    self.vehicle_table.setItem(row, 5, QTableWidgetItem(str(log.duration_minutes or "")))
-                    self.vehicle_table.setItem(row, 6, QTableWidgetItem(log.session_id or ""))
-                    self.vehicle_table.setItem(row, 7, QTableWidgetItem(camera_name))
+                    
+                    # Display duration in hours
+                    duration_text = ""
+                    if log.duration_hours is not None:
+                        duration_text = f"{log.duration_hours:.2f}"
+                    elif log.duration_minutes is not None:
+                        # Fallback for old records without duration_hours
+                        duration_text = f"{(log.duration_minutes / 60.0):.2f}"
+                    self.vehicle_table.setItem(row, 5, QTableWidgetItem(duration_text))
+                    
+                    # Display amount
+                    amount_text = ""
+                    if log.amount is not None:
+                        amount_text = f"{log.amount:.2f}"
+                    self.vehicle_table.setItem(row, 6, QTableWidgetItem(amount_text))
+                    
+                    self.vehicle_table.setItem(row, 7, QTableWidgetItem(log.session_id or ""))
+                    self.vehicle_table.setItem(row, 8, QTableWidgetItem(camera_name))
                 
                 print("✅ Vehicle logs loaded successfully")
                 
@@ -743,8 +758,24 @@ class DatabasePage(QWidget):
                     self.vehicle_table.setItem(i, 2, QTableWidgetItem(log.plate_number))
                     self.vehicle_table.setItem(i, 3, QTableWidgetItem(log.toggle_mode.value))
                     self.vehicle_table.setItem(i, 4, QTableWidgetItem(log.captured_at.strftime('%Y-%m-%d %H:%M:%S')))
-                    duration = str(log.duration_minutes) if log.duration_minutes else "N/A"
-                    self.vehicle_table.setItem(i, 5, QTableWidgetItem(duration))
+                    
+                    # Display duration in hours
+                    duration_text = ""
+                    if log.duration_hours is not None:
+                        duration_text = f"{log.duration_hours:.2f}"
+                    elif log.duration_minutes is not None:
+                        duration_text = f"{(log.duration_minutes / 60.0):.2f}"
+                    else:
+                        duration_text = "N/A"
+                    self.vehicle_table.setItem(i, 5, QTableWidgetItem(duration_text))
+                    
+                    # Display amount
+                    amount_text = ""
+                    if log.amount is not None:
+                        amount_text = f"{log.amount:.2f}"
+                    else:
+                        amount_text = "N/A"
+                    self.vehicle_table.setItem(i, 6, QTableWidgetItem(amount_text))
                 
         except Exception as e:
             print(f"Error filtering vehicle logs: {e}")

@@ -135,5 +135,17 @@ fix_database.py
 init_database.py
 check_database.py
 
+# Plate images directory
+plate_images/
+
 # Documentation (keep README.md)
 SYSTEM_DOCUMENTATION.txt
+
+# Data directories
+photo data/
+
+# File types
+*.csv
+*.log
+*.db
+*.txt

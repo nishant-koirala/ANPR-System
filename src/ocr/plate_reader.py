@@ -6,7 +6,8 @@ from config.settings import (OCR_LANGUAGES, OCR_GPU_ENABLED, OCR_CONFIDENCE_THRE
                              OCR_FORMAT1_RELAXED_WIDTH_THS, OCR_FORMAT1_RELAXED_HEIGHT_THS, OCR_FORMAT1_RELAXED_MIN_SIZE,
                              OCR_FORMAT2_PARAGRAPH_WIDTH_THS, OCR_FORMAT2_PARAGRAPH_HEIGHT_THS,
                              OCR_FORMAT2_STANDARD_WIDTH_THS, OCR_FORMAT2_STANDARD_HEIGHT_THS, OCR_FORMAT2_STANDARD_MIN_SIZE,
-                             OCR_FORMAT2_PERMISSIVE_WIDTH_THS, OCR_FORMAT2_PERMISSIVE_HEIGHT_THS, OCR_FORMAT2_PERMISSIVE_MIN_SIZE)
+                             OCR_FORMAT2_PERMISSIVE_WIDTH_THS, OCR_FORMAT2_PERMISSIVE_HEIGHT_THS, OCR_FORMAT2_PERMISSIVE_MIN_SIZE,
+                             DEFAULT_LICENSE_FORMAT)
 from src.utils.image_processing import resize_plate_for_ocr, preprocess_for_ocr
 from src.utils.text_processing import flatten_text, validate_license_format, format_license_plate
 
@@ -17,7 +18,7 @@ class PlateReader:
         # Optional directory to store debug images
         self.debug_dir = None
     
-    def extract_plate_text(self, image, license_format='format1'):
+    def extract_plate_text(self, image, license_format=None):
         """Extract text from license plate image"""
         try:
             # Check image validity
@@ -29,9 +30,13 @@ class PlateReader:
             if DEBUG_OCR_VERBOSE:
                 print(f"DEBUG: Processing image of size {image.shape}")
 
-            # Automatic mode: try both formats
+            # Use default format from settings if not specified
+            if license_format is None:
+                license_format = DEFAULT_LICENSE_FORMAT
+            
+            # Automatic mode: try all formats
             if license_format == 'auto':
-                for fmt in ('format2', 'format1'):
+                for fmt in ('format3', 'format2', 'format1'):
                     if DEBUG_OCR_VERBOSE:
                         print(f"DEBUG: Auto mode - trying {fmt}")
                     t, s = self.extract_plate_text(image, fmt)
@@ -67,7 +72,7 @@ class PlateReader:
                 strategies = []
                 
                 if license_format == 'format2':
-                    # Format 2: AA 0101 - multiple strategies for spaced text
+                    # Format 2: AA 1111 - multiple strategies for spaced text
                     strategies = [
                         # Strategy 1: Paragraph mode with relaxed parameters
                         {'img': processed_img, 'params': {'paragraph': True, 'width_ths': OCR_FORMAT2_PARAGRAPH_WIDTH_THS, 'height_ths': OCR_FORMAT2_PARAGRAPH_HEIGHT_THS}, 'name': 'Format2 paragraph'},
@@ -79,6 +84,20 @@ class PlateReader:
                         {'img': thresh, 'params': {'width_ths': OCR_FORMAT2_STANDARD_WIDTH_THS, 'height_ths': OCR_FORMAT2_STANDARD_HEIGHT_THS, 'min_size': OCR_FORMAT2_STANDARD_MIN_SIZE}, 'name': 'Format2 thresh standard'},
                         # Strategy 5: Very permissive detection
                         {'img': processed_img, 'params': {'width_ths': OCR_FORMAT2_PERMISSIVE_WIDTH_THS, 'height_ths': OCR_FORMAT2_PERMISSIVE_HEIGHT_THS, 'min_size': OCR_FORMAT2_PERMISSIVE_MIN_SIZE}, 'name': 'Format2 permissive'}
+                    ]
+                elif license_format == 'format3':
+                    # Format 3: A AA 1111 - similar to format2 but with 3 letters
+                    strategies = [
+                        # Strategy 1: Paragraph mode with relaxed parameters
+                        {'img': processed_img, 'params': {'paragraph': True, 'width_ths': OCR_FORMAT2_PARAGRAPH_WIDTH_THS, 'height_ths': OCR_FORMAT2_PARAGRAPH_HEIGHT_THS}, 'name': 'Format3 paragraph'},
+                        # Strategy 2: Standard mode with very relaxed parameters
+                        {'img': processed_img, 'params': {'width_ths': OCR_FORMAT2_STANDARD_WIDTH_THS, 'height_ths': OCR_FORMAT2_STANDARD_HEIGHT_THS, 'min_size': OCR_FORMAT2_STANDARD_MIN_SIZE}, 'name': 'Format3 standard'},
+                        # Strategy 3: Try on threshold image with paragraph mode
+                        {'img': thresh, 'params': {'paragraph': True, 'width_ths': OCR_FORMAT2_PARAGRAPH_WIDTH_THS, 'height_ths': OCR_FORMAT2_PARAGRAPH_HEIGHT_THS}, 'name': 'Format3 thresh paragraph'},
+                        # Strategy 4: Try on threshold image standard
+                        {'img': thresh, 'params': {'width_ths': OCR_FORMAT2_STANDARD_WIDTH_THS, 'height_ths': OCR_FORMAT2_STANDARD_HEIGHT_THS, 'min_size': OCR_FORMAT2_STANDARD_MIN_SIZE}, 'name': 'Format3 thresh standard'},
+                        # Strategy 5: Very permissive detection
+                        {'img': processed_img, 'params': {'width_ths': OCR_FORMAT2_PERMISSIVE_WIDTH_THS, 'height_ths': OCR_FORMAT2_PERMISSIVE_HEIGHT_THS, 'min_size': OCR_FORMAT2_PERMISSIVE_MIN_SIZE}, 'name': 'Format3 permissive'}
                     ]
                 else:
                     # Format 1: AA00AAA - standard strategies
@@ -137,8 +156,21 @@ class PlateReader:
                 # Clean and normalize text
                 text = str(text).upper().strip()
                 
-                # For Format 2, try multiple text variations to handle OCR inconsistencies
-                if license_format == 'format2':
+                # Clean OCR artifacts and special characters
+                import re
+                # Remove common OCR artifacts and keep only alphanumeric and spaces
+                cleaned_text = re.sub(r'[^A-Z0-9\s]', '', text)
+                # Normalize multiple spaces to single space
+                cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+                
+                if DEBUG_OCR_VERBOSE:
+                    print(f"DEBUG: Cleaned text: '{text}' -> '{cleaned_text}'")
+                
+                # Use cleaned text for processing
+                text = cleaned_text
+                
+                # Handle text variations based on format
+                if license_format in ['format2', 'format3']:
                     text_variations = [
                         text,  # Original text
                         text.replace(' ', ''),  # No spaces
@@ -146,9 +178,27 @@ class PlateReader:
                         text.replace('\n', ''),  # Remove newlines
                         text.replace('  ', ' '),  # Normalize double spaces
                     ]
-                    # Add variation with space inserted after 2 characters if no space exists
-                    if ' ' not in text and len(text) >= 3:
-                        text_variations.append(f"{text[:2]} {text[2:]}")
+                    
+                    # Try to extract meaningful parts from noisy text
+                    words = text.split()
+                    if len(words) >= 2:
+                        # Try different combinations of words
+                        for i in range(len(words)):
+                            for j in range(i+1, len(words)+1):
+                                candidate = ' '.join(words[i:j])
+                                if len(candidate.replace(' ', '')) >= 4:  # Minimum meaningful length
+                                    text_variations.append(candidate)
+                    
+                    # Add variation with spaces inserted based on format
+                    no_space_text = text.replace(' ', '')
+                    if license_format == 'format2' and len(no_space_text) >= 6:
+                        # Format 2: AA 1111 - space after 2 characters
+                        text_variations.append(f"{no_space_text[:2]} {no_space_text[2:]}")
+                    elif license_format == 'format3' and len(no_space_text) >= 7:
+                        # Format 3: A AA 1111 - spaces after 1st and 3rd characters
+                        text_variations.append(f"{no_space_text[0]} {no_space_text[1:3]} {no_space_text[3:]}")
+                        # Also try with just one space after 3 characters
+                        text_variations.append(f"{no_space_text[:3]} {no_space_text[3:]}")
                 else:
                     # For Format 1, just remove all spaces
                     text_variations = [text.replace(' ', '').replace('\n', '')]

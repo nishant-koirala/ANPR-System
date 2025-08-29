@@ -73,6 +73,8 @@ class SearchThread(QThread):
                         'captured_at': log.captured_at,
                         'camera_name': log.raw_log.camera.camera_name if log.raw_log and log.raw_log.camera else 'Unknown',
                         'duration_minutes': log.duration_minutes,
+                        'duration_hours': log.duration_hours,
+                        'amount': log.amount,
                         'session_id': log.session_id,
                         'location_info': log.location_info or '',
                         'notes': log.notes or '',
@@ -249,7 +251,7 @@ class SearchPlatePage(QWidget):
         
     def setup_results_table(self):
         """Setup the results table"""
-        headers = ['Image', 'Plate Number', 'Type', 'Date/Time', 'Camera', 'Duration (min)', 'Edited', 'Actions']
+        headers = ['Image', 'Plate Number', 'Type', 'Date/Time', 'Camera', 'Duration (hrs)', 'Amount (NPR)', 'Edited', 'Actions']
         self.results_table.setColumnCount(len(headers))
         self.results_table.setHorizontalHeaderLabels(headers)
         
@@ -262,25 +264,26 @@ class SearchPlatePage(QWidget):
         # Set column widths
         header = self.results_table.horizontalHeader()
         header.setStretchLastSection(False)
-        self.results_table.setColumnWidth(0, 80)   # Image column
+        self.results_table.setColumnWidth(0, 100)  # Image
         self.results_table.setColumnWidth(1, 120)  # Plate Number
         self.results_table.setColumnWidth(2, 80)   # Type
         self.results_table.setColumnWidth(3, 150)  # Date/Time
         self.results_table.setColumnWidth(4, 100)  # Camera
-        self.results_table.setColumnWidth(5, 80)   # Duration
-        self.results_table.setColumnWidth(6, 80)   # Edited
-        self.results_table.setColumnWidth(7, 100)  # Actions
+        self.results_table.setColumnWidth(5, 80)   # Duration (hrs)
+        self.results_table.setColumnWidth(6, 100)  # Amount (NPR)
+        self.results_table.setColumnWidth(7, 80)   # Edited
+        self.results_table.setColumnWidth(8, 100)  # Actions
         
-        # Set column widths
-        header = self.results_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Log ID
+        # Set column resize modes
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Image
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Plate Number
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Type
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Date/Time
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Camera
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Duration
-        header.setSectionResizeMode(6, QHeaderView.Stretch)          # Location
-        header.setSectionResizeMode(7, QHeaderView.Stretch)          # Notes
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Duration (hrs)
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Amount (NPR)
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Edited
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Actions
         
         # Style the table
         self.results_table.setStyleSheet("""
@@ -444,20 +447,30 @@ class SearchPlatePage(QWidget):
             # Camera
             self.results_table.setItem(row, 4, QTableWidgetItem(result['camera_name']))
             
-            # Duration
-            duration = str(result['duration_minutes']) if result['duration_minutes'] else ''
-            self.results_table.setItem(row, 5, QTableWidgetItem(duration))
+            # Duration in hours
+            duration_text = ""
+            if result['duration_hours'] is not None:
+                duration_text = f"{result['duration_hours']:.2f}"
+            elif result['duration_minutes'] is not None:
+                duration_text = f"{(result['duration_minutes'] / 60.0):.2f}"
+            self.results_table.setItem(row, 5, QTableWidgetItem(duration_text))
+            
+            # Amount
+            amount_text = ""
+            if result['amount'] is not None:
+                amount_text = f"{result['amount']:.2f}"
+            self.results_table.setItem(row, 6, QTableWidgetItem(amount_text))
             
             # Edited status
             edited_status = "Yes" if result.get('is_edited') else "No"
             edited_item = QTableWidgetItem(edited_status)
             if result.get('is_edited'):
                 edited_item.setBackground(QColor('#fff3cd'))  # Light yellow
-            self.results_table.setItem(row, 6, edited_item)
+            self.results_table.setItem(row, 7, edited_item)
             
             # Actions button
             actions_widget = self.create_actions_widget(result)
-            self.results_table.setCellWidget(row, 7, actions_widget)
+            self.results_table.setCellWidget(row, 8, actions_widget)
     
     def create_actions_widget(self, result):
         """Create actions widget for table row"""
@@ -492,6 +505,22 @@ class SearchPlatePage(QWidget):
             else:
                 self.view_details(result)
     
+    def _format_duration(self, result):
+        """Format duration for display"""
+        if result['duration_hours'] is not None:
+            return f"{result['duration_hours']:.2f}"
+        elif result['duration_minutes'] is not None:
+            return f"{(result['duration_minutes'] / 60.0):.2f}"
+        else:
+            return "N/A"
+    
+    def _format_amount(self, result):
+        """Format amount for display"""
+        if result['amount'] is not None:
+            return f"{result['amount']:.2f}"
+        else:
+            return "N/A"
+    
     def view_details(self, result):
         """View detailed information for a result"""
         details = f"""
@@ -502,7 +531,8 @@ Original Plate: {result.get('original_plate_number', 'N/A')}
 Type: {result['toggle_mode']}
 Date/Time: {result['captured_at'].strftime('%Y-%m-%d %H:%M:%S') if result['captured_at'] else 'N/A'}
 Camera: {result['camera_name']}
-Duration: {result['duration_minutes']} minutes
+Duration: {self._format_duration(result)} hours
+Amount: NPR {self._format_amount(result)}
 Location: {result.get('location_info', 'N/A')}
 Session ID: {result.get('session_id', 'N/A')}
 Confidence: {result.get('confidence', 'N/A')}
@@ -570,18 +600,29 @@ Edit Reason: {result.get('edit_reason', 'N/A')}
             if file_path:
                 with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
                     fieldnames = ['Log ID', 'Plate Number', 'Type', 'Date/Time', 'Camera', 
-                                'Duration (min)', 'Location', 'Notes']
+                                'Duration (hrs)', 'Amount (NPR)', 'Location', 'Notes']
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     
                     writer.writeheader()
                     for result in self.current_results:
+                        duration_hrs = ""
+                        if result['duration_hours'] is not None:
+                            duration_hrs = f"{result['duration_hours']:.2f}"
+                        elif result['duration_minutes'] is not None:
+                            duration_hrs = f"{(result['duration_minutes'] / 60.0):.2f}"
+                        
+                        amount_text = ""
+                        if result['amount'] is not None:
+                            amount_text = f"{result['amount']:.2f}"
+                        
                         writer.writerow({
                             'Log ID': result['log_id'],
                             'Plate Number': result['plate_number'],
                             'Type': result['toggle_mode'],
                             'Date/Time': result['captured_at'].strftime('%Y-%m-%d %H:%M:%S'),
                             'Camera': result['camera_name'],
-                            'Duration (min)': result['duration_minutes'] or '',
+                            'Duration (hrs)': duration_hrs,
+                            'Amount (NPR)': amount_text,
                             'Location': result['location_info'],
                             'Notes': result['notes']
                         })

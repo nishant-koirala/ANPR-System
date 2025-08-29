@@ -170,7 +170,8 @@ class Database:
     def add_vehicle_log(self, plate_number: str, toggle_mode: ToggleMode, 
                        raw_ref: int, vehicle_id: Optional[int] = None,
                        session_id: Optional[str] = None, location_info: Optional[str] = None,
-                       duration_minutes: Optional[int] = None, image_data: Optional[dict] = None) -> int:
+                       duration_minutes: Optional[int] = None, duration_hours: Optional[float] = None,
+                       amount: Optional[float] = None, image_data: Optional[dict] = None) -> int:
         """
         Add a new vehicle log entry with toggle mode
         
@@ -181,7 +182,10 @@ class Database:
             vehicle_id: Vehicle ID if known
             session_id: Session identifier for grouping
             location_info: Additional location context
-            duration_minutes: Duration for EXIT records
+            duration_minutes: Duration for EXIT records in minutes
+            duration_hours: Duration for EXIT records in hours
+            amount: Calculated parking fee amount
+            image_data: Image data dictionary
             
         Returns:
             log_id of the created record
@@ -195,7 +199,9 @@ class Database:
                 raw_ref=raw_ref,
                 session_id=session_id,
                 location_info=location_info,
-                duration_minutes=duration_minutes
+                duration_minutes=duration_minutes,
+                duration_hours=duration_hours,
+                amount=amount
             )
             
             # Add image data if provided
