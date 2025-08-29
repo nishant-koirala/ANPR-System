@@ -39,8 +39,18 @@ class PlateDetectorDashboard(QWidget):
         self.current_settings = {}
         self.load_settings()
         
+        # Initialize webcam variables
+        self.webcam = None
+        self.webcam_timer = None
+        self.is_live_active = False
+        self.available_cameras = []
+        self.selected_camera_index = 0
+        
         # Prepare temp directories for this session
         self.setup_temp_dirs()
+        
+        # Detect available cameras
+        self.detect_cameras()
         
         # Build UI
         self.build_ui()
@@ -705,15 +715,47 @@ class PlateDetectorDashboard(QWidget):
         preview_hbox.addWidget(plates_panel)
         content_layout.addLayout(preview_hbox)
 
-        # Upload buttons
+        # Upload and Live buttons
         upload_btns = QHBoxLayout()
         image_btn = QPushButton("Upload Image")
         image_btn.clicked.connect(self.load_image)
         video_btn = QPushButton("Upload Video")
         video_btn.clicked.connect(self.load_video)
+        # Camera selection and live button layout
+        camera_layout = QHBoxLayout()
+        
+        # Camera selection dropdown
+        self.camera_combo = QComboBox()
+        self.camera_combo.setMinimumWidth(200)
+        self.populate_camera_combo()
+        camera_layout.addWidget(QLabel("Camera:"))
+        camera_layout.addWidget(self.camera_combo)
+        
+        # IP Camera input
+        self.ip_input = QLineEdit()
+        self.ip_input.setPlaceholderText("DroidCam IP (e.g., 192.168.1.100:4747)")
+        self.ip_input.setMinimumWidth(200)
+        camera_layout.addWidget(QLabel("IP:"))
+        camera_layout.addWidget(self.ip_input)
+        
+        # Refresh cameras button
+        refresh_btn = QPushButton("🔄")
+        refresh_btn.setMaximumWidth(30)
+        refresh_btn.setToolTip("Refresh camera list")
+        refresh_btn.clicked.connect(self.refresh_cameras)
+        camera_layout.addWidget(refresh_btn)
+        
+        live_btn = QPushButton("Start Live Camera")
+        live_btn.clicked.connect(self.toggle_live_camera)
+        camera_layout.addWidget(live_btn)
+        
         for btn in [image_btn, video_btn]:
             btn.setStyleSheet("padding: 10px; background-color: #0984e3; color: white; border-radius: 5px;")
             upload_btns.addWidget(btn)
+        
+        live_btn.setStyleSheet("padding: 10px; background-color: #27ae60; color: white; border-radius: 5px;")
+        upload_btns.addLayout(camera_layout)
+        self.live_btn = live_btn  # Store reference for updating text
         content_layout.addLayout(upload_btns)
 
         # Vehicle counter
@@ -1435,6 +1477,10 @@ class PlateDetectorDashboard(QWidget):
 
     def load_image(self):
         """Load and process single image"""
+        # Stop live camera if active
+        if self.is_live_active:
+            self.stop_live_camera()
+            
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg)")
         if file_path:
             # For single image, request processed overlay to be shown
@@ -1442,6 +1488,10 @@ class PlateDetectorDashboard(QWidget):
 
     def load_video(self):
         """Load video file"""
+        # Stop live camera if active
+        if self.is_live_active:
+            self.stop_live_camera()
+            
         self.video_path, _ = QFileDialog.getOpenFileName(self, "Select Video", "", "Video Files (*.mp4 *.avi *.mov)")
         if self.video_path:
             self.cap = cv2.VideoCapture(self.video_path)
@@ -1809,7 +1859,7 @@ class PlateDetectorDashboard(QWidget):
             
         except Exception as e:
             print(f"Error adding plate to preview: {e}")
-    
+
     def closeEvent(self, event):
         """Cleanup temp files and release resources on close"""
         try:
@@ -1825,6 +1875,321 @@ class PlateDetectorDashboard(QWidget):
         super().closeEvent(event)
     
     # Process frame method will be in the main application file
-    def process_frame(self, file_path, preview=False):
+    def process_frame(self, frame_path, preview=False, source="file"):
         """This method will be implemented in the main application"""
         pass
+
+    def toggle_live_camera(self):
+        """Toggle live camera feed"""
+        if not self.is_live_active:
+            self.start_live_camera()
+        else:
+            self.stop_live_camera()
+    
+    def start_live_camera(self):
+        """Start live camera feed"""
+        try:
+            # Get selected camera index
+            self.selected_camera_index = self.camera_combo.currentData()
+            if self.selected_camera_index is None:
+                QMessageBox.warning(self, "Camera Error", "No camera selected. Please select a camera from the dropdown.")
+                return
+            
+            # Handle IP camera
+            if self.selected_camera_index == 'ip_camera':
+                ip_address = self.ip_input.text().strip()
+                if not ip_address:
+                    QMessageBox.warning(self, "IP Camera Error", "Please enter DroidCam IP address (e.g., 192.168.1.100:4747)")
+                    return
+                
+                # Clean up IP address - remove http:// if user added it
+                if ip_address.startswith('http://'):
+                    ip_address = ip_address[7:]
+                elif ip_address.startswith('https://'):
+                    ip_address = ip_address[8:]
+                
+                # Try different DroidCam URL formats
+                urls_to_try = [
+                    f"http://{ip_address}/video",
+                    f"http://{ip_address}/mjpegfeed?640x480",
+                    f"http://{ip_address}/cam/1/stream"
+                ]
+                
+                # If no port specified, also try with :4747
+                if ':' not in ip_address:
+                    urls_to_try.extend([
+                        f"http://{ip_address}:4747/video",
+                        f"http://{ip_address}:4747/mjpegfeed?640x480"
+                    ])
+                
+                self.webcam = None
+                for url in urls_to_try:
+                    try:
+                        print(f"Trying to connect to: {url}")
+                        self.webcam = cv2.VideoCapture(url)
+                        if self.webcam.isOpened():
+                            # Test if we can read a frame
+                            ret, frame = self.webcam.read()
+                            if ret and frame is not None:
+                                print(f"✅ Successfully connected to DroidCam at: {url}")
+                                break
+                            else:
+                                self.webcam.release()
+                                self.webcam = None
+                        else:
+                            if self.webcam:
+                                self.webcam.release()
+                            self.webcam = None
+                    except Exception as e:
+                        print(f"Failed to connect to {url}: {e}")
+                        if self.webcam:
+                            self.webcam.release()
+                        self.webcam = None
+                
+                if self.webcam is None or not self.webcam.isOpened():
+                    QMessageBox.warning(self, "IP Camera Error", 
+                                      f"Could not connect to DroidCam at {ip_address}.\n\n"
+                                      f"Make sure:\n"
+                                      f"1. DroidCam app is running on your phone\n"
+                                      f"2. WiFi IP is enabled in DroidCam\n"
+                                      f"3. Both devices are on same network\n"
+                                      f"4. IP address is correct (check DroidCam app)")
+                    return
+            else:
+                # Regular camera by index
+                if isinstance(self.selected_camera_index, str):
+                    self.webcam = cv2.VideoCapture(self.selected_camera_index, cv2.CAP_DSHOW)
+                    if not self.webcam.isOpened():
+                        self.webcam = cv2.VideoCapture(self.selected_camera_index)
+                else:
+                    self.webcam = cv2.VideoCapture(self.selected_camera_index, cv2.CAP_DSHOW)
+                    if not self.webcam.isOpened():
+                        self.webcam = cv2.VideoCapture(self.selected_camera_index)
+                
+                if not self.webcam.isOpened():
+                    QMessageBox.warning(self, "Camera Error", f"Could not access camera {self.selected_camera_index}. Please check if camera is connected and not being used by another application.")
+                    return
+            
+            # Set camera properties for better performance
+            self.webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.webcam.set(cv2.CAP_PROP_FPS, 30)
+            
+            # Start timer for frame capture
+            self.webcam_timer = QTimer()
+            self.webcam_timer.timeout.connect(self.capture_webcam_frame)
+            self.webcam_timer.start(33)  # ~30 FPS
+            
+            # Update UI
+            self.is_live_active = True
+            self.live_btn.setText("Stop Live Camera")
+            self.live_btn.setStyleSheet("padding: 10px; background-color: #e74c3c; color: white; border-radius: 5px;")
+            
+            print("Live camera started successfully")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Camera Error", f"Failed to start camera: {str(e)}")
+            print(f"Error starting camera: {e}")
+    
+    def stop_live_camera(self):
+        """Stop live camera feed"""
+        try:
+            # Stop timer
+            if self.webcam_timer:
+                self.webcam_timer.stop()
+                self.webcam_timer = None
+            
+            # Release webcam
+            if self.webcam:
+                self.webcam.release()
+                self.webcam = None
+            
+            # Update UI
+            self.is_live_active = False
+            self.live_btn.setText("Start Live Camera")
+            self.live_btn.setStyleSheet("padding: 10px; background-color: #27ae60; color: white; border-radius: 5px;")
+            
+            print("Live camera stopped")
+            
+        except Exception as e:
+            print(f"Error stopping camera: {e}")
+    
+    def capture_webcam_frame(self):
+        """Capture and process frame from webcam"""
+        if not self.webcam or not self.webcam.isOpened():
+            return
+            
+        ret, frame = self.webcam.read()
+        if not ret:
+            return
+        
+        # Display webcam feed in the video player area
+        self.display_webcam_frame(frame)
+            
+        # Apply frame skip for performance
+        if not hasattr(self, 'webcam_frame_count'):
+            self.webcam_frame_count = 0
+            
+        # Skip frames based on settings for processing (not display)
+        frame_skip = getattr(settings, 'DEFAULT_FRAME_SKIP', 2)
+        
+        self.webcam_frame_count += 1
+        if self.webcam_frame_count % frame_skip != 0:
+            return
+        
+        # Convert frame to the format expected by process_frame
+        # Save frame temporarily and process it
+        temp_path = os.path.join(self.session_temp_dir, f"webcam_frame_{self.webcam_frame_count}.jpg")
+        cv2.imwrite(temp_path, frame)
+        
+        # Process frame using existing pipeline with preview disabled (we're already showing live feed)
+        self.process_frame(temp_path, preview=False)
+        
+        # Clean up temporary file
+        try:
+            os.remove(temp_path)
+        except:
+            pass
+    
+    def display_webcam_frame(self, frame):
+        """Display webcam frame in the video player area"""
+        try:
+            # Convert BGR to RGB
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_frame.shape
+            bytes_per_line = ch * w
+            
+            # Create QImage and QPixmap
+            qt_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_img).scaled(700, 400, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            # Display in the video player area
+            self.image_label.setPixmap(pixmap)
+        except Exception as e:
+            print(f"Error displaying webcam frame: {e}")
+    
+    def detect_cameras(self):
+        """Detect available camera devices"""
+        self.available_cameras = []
+        
+        print("Scanning for cameras...")
+        
+        # Add IP Camera option
+        self.available_cameras.append({
+            'index': 'ip_camera',
+            'name': 'DroidCam IP Stream',
+            'resolution': 'Variable',
+            'fps': 30,
+            'backend': 'HTTP/RTSP'
+        })
+        
+        # Test camera indices 0-5 for regular cameras
+        for i in range(6):
+            try:
+                camera_found = False
+                camera_info = None
+                
+                backends = [
+                    (cv2.CAP_DSHOW, "DSHOW"),
+                    (-1, "DEFAULT")
+                ]
+                
+                for backend_id, backend_name in backends:
+                    try:
+                        if backend_id == -1:
+                            cap = cv2.VideoCapture(i)
+                        else:
+                            cap = cv2.VideoCapture(i, backend_id)
+                        
+                        if cap.isOpened():
+                            ret, frame = cap.read()
+                            if ret and frame is not None:
+                                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                                
+                                camera_info = {
+                                    'index': i,
+                                    'name': f"Camera {i} (Built-in)" if i == 0 else f"Camera {i}",
+                                    'resolution': f"{width}x{height}",
+                                    'fps': fps,
+                                    'backend': backend_name
+                                }
+                                
+                                camera_found = True
+                                print(f"Found camera {i}: {camera_info['name']} - {width}x{height} @ {fps}fps ({backend_name})")
+                                break
+                        
+                        cap.release()
+                        
+                    except Exception:
+                        if 'cap' in locals():
+                            cap.release()
+                        continue
+                
+                if camera_found and camera_info:
+                    self.available_cameras.append(camera_info)
+                    
+            except Exception:
+                continue
+        
+        if len(self.available_cameras) == 1:  # Only IP camera option
+            print("No local cameras detected, IP camera option available")
+        
+        print(f"Camera detection complete. Found {len(self.available_cameras)} camera option(s).")
+    
+    def get_droidcam_device_names(self):
+        """Get DroidCam device names for direct access"""
+        device_names = []
+        try:
+            import subprocess
+            
+            # Get all video devices from Windows
+            result = subprocess.run(['wmic', 'path', 'win32_pnpentity', 'where', 'name like "%video%"', 'get', 'name'], 
+                                  capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if 'DroidCam' in line:
+                        device_names.append(line)
+                        print(f"Found DroidCam device: {line}")
+            
+            # Also try common DroidCam device names
+            common_names = [
+                "DroidCam Video",
+                "DroidCam Source 3",
+                "DroidCam Source 2", 
+                "DroidCam Source 1",
+                "DroidCam"
+            ]
+            
+            for name in common_names:
+                if name not in device_names:
+                    device_names.append(name)
+                    
+        except Exception as e:
+            print(f"Could not get DroidCam device names: {e}")
+            
+        return device_names
+    
+    def populate_camera_combo(self):
+        """Populate camera selection combo box"""
+        self.camera_combo.clear()
+        
+        for camera in self.available_cameras:
+            display_text = f"{camera['name']} ({camera['resolution']})"
+            if camera['fps'] > 0:
+                display_text += f" @ {camera['fps']}fps"
+            
+            self.camera_combo.addItem(display_text, camera['index'])
+        
+        # Set default selection to first available camera
+        if self.available_cameras and self.available_cameras[0]['fps'] > 0:
+            self.camera_combo.setCurrentIndex(0)
+    
+    def refresh_cameras(self):
+        """Refresh camera list and update combo box"""
+        self.detect_cameras()
+        self.populate_camera_combo()

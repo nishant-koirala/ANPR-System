@@ -399,7 +399,25 @@ class ANPRApplication(PlateDetectorDashboard):
     def get_final_plate_for_vehicle(self, vehicle_id):
         """Get final plate assignment for vehicle"""
         if vehicle_id in self.vehicle_final_plates:
-            return self.vehicle_final_plates[vehicle_id]
+            # Check if we have new candidates that are significantly different
+            candidates = self.vehicle_plate_candidates.get(vehicle_id, [])
+            if candidates:
+                current_finalized = self.vehicle_final_plates[vehicle_id]['text']
+                latest_candidate = candidates[0][0]  # Best candidate text
+                latest_confidence = candidates[0][1]  # Best candidate confidence
+                
+                # If latest candidate is different and has high confidence, allow re-evaluation
+                if (latest_candidate != current_finalized and 
+                    latest_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD):
+                    print(f"DEBUG: Re-evaluating vehicle {vehicle_id}: current='{current_finalized}' vs new='{latest_candidate}' (conf={latest_confidence})")
+                    # Clear the finalized plate to allow re-evaluation
+                    del self.vehicle_final_plates[vehicle_id]
+                    if current_finalized in self.plate_ownership:
+                        del self.plate_ownership[current_finalized]
+                else:
+                    return self.vehicle_final_plates[vehicle_id]
+            else:
+                return self.vehicle_final_plates[vehicle_id]
         
         candidates = self.vehicle_plate_candidates.get(vehicle_id, [])
         if not candidates:

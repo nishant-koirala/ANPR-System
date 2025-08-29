@@ -164,7 +164,7 @@ class Database:
                 raw_log.image_size = image_data.get('image_size')
             
             session.add(raw_log)
-            session.flush()
+            session.commit()  # Add missing commit
             return raw_log.raw_id
     
     def add_vehicle_log(self, plate_number: str, toggle_mode: ToggleMode, 
