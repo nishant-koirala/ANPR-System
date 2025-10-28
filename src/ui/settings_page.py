@@ -45,12 +45,16 @@ class SettingsPage(QWidget):
                 background-color: #f0f0f0;
                 padding: 8px 16px;
                 margin-right: 2px;
-                border: 1px solid #c0c0c0;
-                border-bottom: none;
+                min-width: 100px;
+                font-size: 13px;
             }
             QTabBar::tab:selected {
                 background-color: white;
-                border-bottom: 1px solid white;
+                border-bottom-color: white;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover {
+                background-color: #e9ecef;
             }
         """)
         

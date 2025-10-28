@@ -278,6 +278,13 @@ class DatabasePage(QWidget):
         super().__init__()
         self.db = None
         self.rbac_controller = rbac_controller
+        
+        # Pagination settings
+        self.current_page = 1
+        self.records_per_page = 50  # Show 50 records per page
+        self.total_records = 0
+        self.total_pages = 1
+        
         self.init_database()
         self.setup_ui()
         self.setup_refresh_timer()
@@ -381,6 +388,50 @@ class DatabasePage(QWidget):
         search_layout.addWidget(self.date_from)
         
         layout.addWidget(search_group)
+        
+        # Pagination controls
+        pagination_layout = QHBoxLayout()
+        
+        self.first_page_btn = QPushButton("⏮ First")
+        self.first_page_btn.clicked.connect(self.go_to_first_page)
+        self.first_page_btn.setMaximumWidth(80)
+        
+        self.prev_page_btn = QPushButton("◀ Prev")
+        self.prev_page_btn.clicked.connect(self.go_to_prev_page)
+        self.prev_page_btn.setMaximumWidth(80)
+        
+        self.page_label = QLabel("Page 1 of 1")
+        self.page_label.setAlignment(Qt.AlignCenter)
+        self.page_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        
+        self.next_page_btn = QPushButton("Next ▶")
+        self.next_page_btn.clicked.connect(self.go_to_next_page)
+        self.next_page_btn.setMaximumWidth(80)
+        
+        self.last_page_btn = QPushButton("Last ⏭")
+        self.last_page_btn.clicked.connect(self.go_to_last_page)
+        self.last_page_btn.setMaximumWidth(80)
+        
+        self.records_per_page_combo = QComboBox()
+        self.records_per_page_combo.addItems(["25", "50", "100", "200"])
+        self.records_per_page_combo.setCurrentText("50")
+        self.records_per_page_combo.currentTextChanged.connect(self.change_records_per_page)
+        self.records_per_page_combo.setMaximumWidth(80)
+        
+        self.records_info_label = QLabel("Showing 0-0 of 0")
+        self.records_info_label.setStyleSheet("padding: 5px;")
+        
+        pagination_layout.addWidget(self.first_page_btn)
+        pagination_layout.addWidget(self.prev_page_btn)
+        pagination_layout.addWidget(self.page_label)
+        pagination_layout.addWidget(self.next_page_btn)
+        pagination_layout.addWidget(self.last_page_btn)
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(QLabel("Records per page:"))
+        pagination_layout.addWidget(self.records_per_page_combo)
+        pagination_layout.addWidget(self.records_info_label)
+        
+        layout.addLayout(pagination_layout)
         
         # Vehicle logs table
         self.vehicle_table = QTableWidget()
@@ -513,22 +564,33 @@ class DatabasePage(QWidget):
             traceback.print_exc()
     
     def load_vehicle_logs(self):
-        """Load vehicle logs data"""
+        """Load vehicle logs data with pagination"""
         if not self.db:
             print("❌ Database not available")
             return
         
         try:
-            print("🔄 Loading vehicle logs...")
+            print(f"🔄 Loading vehicle logs (Page {self.current_page})...")
             with self.db.get_session() as session:
-                # Get recent vehicle logs (last 1000 records)
+                # Get total count for pagination
+                self.total_records = session.query(VehicleLog).count()
+                self.total_pages = max(1, (self.total_records + self.records_per_page - 1) // self.records_per_page)
+                
+                # Calculate offset
+                offset = (self.current_page - 1) * self.records_per_page
+                
+                # Get paginated vehicle logs
                 logs = session.query(VehicleLog)\
                              .order_by(VehicleLog.captured_at.desc())\
-                             .limit(1000)\
+                             .limit(self.records_per_page)\
+                             .offset(offset)\
                              .all()
                 
-                print(f"📊 Found {len(logs)} vehicle logs")
+                print(f"📊 Found {len(logs)} vehicle logs (Total: {self.total_records})")
                 self.vehicle_table.setRowCount(len(logs))
+                
+                # Update pagination controls
+                self.update_pagination_controls()
                 
                 for row, log in enumerate(logs):
                     # Get camera info
@@ -1003,3 +1065,56 @@ class DatabasePage(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to update plate number: {e}")
             import traceback
             traceback.print_exc()
+    
+    # ===== Pagination Methods =====
+    
+    def update_pagination_controls(self):
+        """Update pagination control states and labels"""
+        # Update page label
+        self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
+        
+        # Update records info
+        start_record = (self.current_page - 1) * self.records_per_page + 1
+        end_record = min(self.current_page * self.records_per_page, self.total_records)
+        self.records_info_label.setText(f"Showing {start_record}-{end_record} of {self.total_records}")
+        
+        # Enable/disable navigation buttons
+        self.first_page_btn.setEnabled(self.current_page > 1)
+        self.prev_page_btn.setEnabled(self.current_page > 1)
+        self.next_page_btn.setEnabled(self.current_page < self.total_pages)
+        self.last_page_btn.setEnabled(self.current_page < self.total_pages)
+    
+    def go_to_first_page(self):
+        """Go to first page"""
+        if self.current_page != 1:
+            self.current_page = 1
+            self.load_vehicle_logs()
+    
+    def go_to_prev_page(self):
+        """Go to previous page"""
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_vehicle_logs()
+    
+    def go_to_next_page(self):
+        """Go to next page"""
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self.load_vehicle_logs()
+    
+    def go_to_last_page(self):
+        """Go to last page"""
+        if self.current_page != self.total_pages:
+            self.current_page = self.total_pages
+            self.load_vehicle_logs()
+    
+    def change_records_per_page(self, value):
+        """Change number of records per page"""
+        try:
+            new_records_per_page = int(value)
+            if new_records_per_page != self.records_per_page:
+                self.records_per_page = new_records_per_page
+                self.current_page = 1  # Reset to first page
+                self.load_vehicle_logs()
+        except ValueError:
+            pass

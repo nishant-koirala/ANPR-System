@@ -11,6 +11,13 @@ from PyQt5.QtGui import QFont
 from datetime import datetime
 from ..auth.auth_manager import AuthManager, Permissions, Roles, AuthorizationError
 
+# Import modern UI components
+try:
+    from .ui_components import ActionButton
+    UI_COMPONENTS_AVAILABLE = True
+except ImportError:
+    UI_COMPONENTS_AVAILABLE = False
+
 class CreateUserDialog(QDialog):
     """Dialog for creating new users"""
     
@@ -257,21 +264,7 @@ class UserManagementPage(QWidget):
         self.users_table.setAlternatingRowColors(True)
         self.users_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.users_table.horizontalHeader().setStretchLastSection(True)
-        self.users_table.setStyleSheet("""
-            QTableWidget {
-                gridline-color: #ddd;
-                background-color: white;
-            }
-            QTableWidget::item {
-                padding: 8px;
-            }
-            QHeaderView::section {
-                background-color: #f8f9fa;
-                padding: 10px;
-                border: 1px solid #ddd;
-                font-weight: bold;
-            }
-        """)
+        # Use global stylesheet - no inline styling needed
         
         # Resize columns
         header = self.users_table.horizontalHeader()
@@ -281,7 +274,10 @@ class UserManagementPage(QWidget):
         header.setSectionResizeMode(3, QHeaderView.Stretch)           # Email
         header.setSectionResizeMode(4, QHeaderView.Stretch)           # Roles
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Last Login
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Actions
+        header.setSectionResizeMode(6, QHeaderView.Fixed)             # Actions
+        
+        # Set minimum width for Actions column to show buttons properly
+        self.users_table.setColumnWidth(6, 200)  # Wide enough for Edit + Delete buttons
         
         # Status bar
         self.status_label = QLabel("Ready")
@@ -419,19 +415,53 @@ class UserManagementPage(QWidget):
                     last_login = user.last_login.strftime("%Y-%m-%d %H:%M") if user.last_login else "Never"
                     self.users_table.setItem(row, 5, QTableWidgetItem(last_login))
                     
-                    # Action buttons
+                    # Action buttons - Use direct QPushButton for reliability
                     actions_widget = QWidget()
                     actions_layout = QHBoxLayout()
                     actions_layout.setContentsMargins(4, 4, 4, 4)
+                    actions_layout.setSpacing(4)
                     
-                    edit_btn = QPushButton("✏️")
+                    # Edit button
+                    edit_btn = QPushButton("✏ Edit")
                     edit_btn.setToolTip("Edit User")
-                    edit_btn.setMaximumSize(30, 30)
-                    edit_btn.clicked.connect(lambda checked, uid=user.user_id: self.edit_user(uid))
+                    edit_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #3498DB;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 8px 16px;
+                            font-size: 13px;
+                            font-weight: 600;
+                            min-width: 70px;
+                            min-height: 32px;
+                        }
+                        QPushButton:hover {
+                            background-color: #2980B9;
+                        }
+                    """)
                     
-                    delete_btn = QPushButton("🗑️")
+                    # Delete button
+                    delete_btn = QPushButton("🗑 Delete")
                     delete_btn.setToolTip("Delete User")
-                    delete_btn.setMaximumSize(30, 30)
+                    delete_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #E74C3C;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 8px 16px;
+                            font-size: 13px;
+                            font-weight: 600;
+                            min-width: 70px;
+                            min-height: 32px;
+                        }
+                        QPushButton:hover {
+                            background-color: #C0392B;
+                        }
+                    """)
+                    
+                    edit_btn.clicked.connect(lambda checked, uid=user.user_id: self.edit_user(uid))
                     delete_btn.clicked.connect(lambda checked, uid=user.user_id: self.delete_user(uid))
                     
                     actions_layout.addWidget(edit_btn)

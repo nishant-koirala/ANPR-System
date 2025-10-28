@@ -9,6 +9,13 @@ from PyQt5.QtGui import QFont, QPixmap, QIcon
 import sys
 import os
 
+# Import modern UI styles
+try:
+    from .ui_styles import Colors, Fonts, Effects
+    UI_STYLES_AVAILABLE = True
+except ImportError:
+    UI_STYLES_AVAILABLE = False
+
 class LoginThread(QThread):
     """Background thread for login authentication"""
     login_success = pyqtSignal(dict)
@@ -43,8 +50,14 @@ class LoginDialog(QDialog):
     def init_ui(self):
         """Initialize the user interface"""
         self.setWindowTitle("ANPR System - Login")
-        self.setFixedSize(400, 500)
+        self.setFixedSize(450, 550)
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint)
+        
+        # Apply modern background
+        if UI_STYLES_AVAILABLE:
+            self.setStyleSheet(f"QDialog {{ background-color: {Colors.BACKGROUND}; }}")
+        else:
+            self.setStyleSheet("QDialog { background-color: #ECF0F1; }")
         
         # Main layout
         main_layout = QVBoxLayout()
@@ -57,16 +70,22 @@ class LoginDialog(QDialog):
         
         # Logo/Title
         title_label = QLabel("🚗 NEPALI ANPR")
-        title_font = QFont("Arial", 24, QFont.Bold)
+        title_font = QFont("Segoe UI", 28, QFont.Bold)
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
+        if UI_STYLES_AVAILABLE:
+            title_label.setStyleSheet(f"color: {Colors.PRIMARY}; margin-bottom: 10px;")
+        else:
+            title_label.setStyleSheet("color: #2C3E50; margin-bottom: 10px;")
         
         subtitle_label = QLabel("Automatic Number Plate Recognition System")
-        subtitle_font = QFont("Arial", 10)
+        subtitle_font = QFont("Segoe UI", 11)
         subtitle_label.setFont(subtitle_font)
         subtitle_label.setAlignment(Qt.AlignCenter)
-        subtitle_label.setStyleSheet("color: #7f8c8d; margin-bottom: 20px;")
+        if UI_STYLES_AVAILABLE:
+            subtitle_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; margin-bottom: 20px;")
+        else:
+            subtitle_label.setStyleSheet("color: #7f8c8d; margin-bottom: 20px;")
         
         header_layout.addWidget(title_label)
         header_layout.addWidget(subtitle_label)
@@ -74,14 +93,24 @@ class LoginDialog(QDialog):
         # Login form section
         form_frame = QFrame()
         form_frame.setFrameStyle(QFrame.Box)
-        form_frame.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 8px;
-                padding: 20px;
-            }
-        """)
+        if UI_STYLES_AVAILABLE:
+            form_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {Colors.CARD_BG};
+                    border: 1px solid {Colors.BORDER_LIGHT};
+                    border-radius: {Effects.BORDER_RADIUS};
+                    padding: 30px;
+                }}
+            """)
+        else:
+            form_frame.setStyleSheet("""
+                QFrame {
+                    background-color: white;
+                    border: 1px solid #dee2e6;
+                    border-radius: 8px;
+                    padding: 30px;
+                }
+            """)
         
         form_layout = QFormLayout()
         form_layout.setSpacing(15)
@@ -156,61 +185,120 @@ class LoginDialog(QDialog):
         
     def get_input_style(self):
         """Get stylesheet for input fields"""
-        return """
-            QLineEdit {
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                padding: 8px 12px;
-                font-size: 14px;
-                background-color: white;
-                color: #212529;
-            }
-            QLineEdit:focus {
-                border-color: #007bff;
-                outline: none;
-            }
-        """
+        if UI_STYLES_AVAILABLE:
+            return f"""
+                QLineEdit {{
+                    border: 1px solid {Colors.BORDER};
+                    border-radius: {Effects.BORDER_RADIUS};
+                    padding: 10px 14px;
+                    font-size: {Fonts.SIZE_BODY};
+                    font-family: {Fonts.FAMILY};
+                    background-color: {Colors.CARD_BG};
+                    color: {Colors.TEXT_PRIMARY};
+                }}
+                QLineEdit:focus {{
+                    border-color: {Colors.ACCENT};
+                    border-width: 2px;
+                    outline: none;
+                }}
+            """
+        else:
+            return """
+                QLineEdit {
+                    border: 1px solid #ced4da;
+                    border-radius: 8px;
+                    padding: 10px 14px;
+                    font-size: 14px;
+                    background-color: white;
+                    color: #212529;
+                }
+                QLineEdit:focus {
+                    border-color: #3498DB;
+                    border-width: 2px;
+                    outline: none;
+                }
+            """
     
     def get_button_style(self, button_type):
         """Get stylesheet for buttons"""
         if button_type == "primary":
-            return """
-                QPushButton {
-                    background-color: #007bff;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 14px;
-                    font-weight: bold;
-                    padding: 10px 20px;
-                }
-                QPushButton:hover {
-                    background-color: #0056b3;
-                }
-                QPushButton:pressed {
-                    background-color: #004085;
-                }
-                QPushButton:disabled {
-                    background-color: #6c757d;
-                }
-            """
+            if UI_STYLES_AVAILABLE:
+                return f"""
+                    QPushButton {{
+                        background-color: {Colors.ACCENT};
+                        color: {Colors.TEXT_WHITE};
+                        border: none;
+                        border-radius: {Effects.BORDER_RADIUS};
+                        font-size: {Fonts.SIZE_BODY};
+                        font-weight: {Fonts.WEIGHT_MEDIUM};
+                        padding: 12px 24px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {Colors.ACCENT_HOVER};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {Colors.PRIMARY};
+                    }}
+                    QPushButton:disabled {{
+                        background-color: {Colors.TEXT_SECONDARY};
+                    }}
+                """
+            else:
+                return """
+                    QPushButton {
+                        background-color: #3498DB;
+                        color: white;
+                        border: none;
+                        border-radius: 8px;
+                        font-size: 14px;
+                        font-weight: bold;
+                        padding: 12px 24px;
+                    }
+                    QPushButton:hover {
+                        background-color: #2980B9;
+                    }
+                    QPushButton:pressed {
+                        background-color: #2C3E50;
+                    }
+                    QPushButton:disabled {
+                        background-color: #95A5A6;
+                    }
+                """
         else:  # secondary
-            return """
-                QPushButton {
-                    background-color: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 14px;
-                    padding: 10px 20px;
-                }
-                QPushButton:hover {
-                    background-color: #545b62;
-                }
-                QPushButton:pressed {
-                    background-color: #3d4142;
-                }
-            """
+            if UI_STYLES_AVAILABLE:
+                return f"""
+                    QPushButton {{
+                        background-color: {Colors.TEXT_SECONDARY};
+                        color: {Colors.TEXT_WHITE};
+                        border: none;
+                        border-radius: {Effects.BORDER_RADIUS};
+                        font-size: {Fonts.SIZE_BODY};
+                        padding: 12px 24px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {Colors.PRIMARY};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {Colors.PRIMARY_LIGHT};
+                    }}
+                """
+            else:
+                return """
+                    QPushButton {
+                        background-color: #95A5A6;
+                        color: white;
+                        border: none;
+                        border-radius: 8px;
+                        font-size: 14px;
+                        padding: 12px 24px;
+                    }
+                    QPushButton:hover {
+                        background-color: #7F8C8D;
+                    }
+                    QPushButton:pressed {
+                        background-color: #2C3E50;
+                    }
+                """
     
     def setup_connections(self):
         """Setup signal connections"""

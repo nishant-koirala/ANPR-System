@@ -149,3 +149,4 @@ photo data/
 *.log
 *.db
 *.txt
+reports/

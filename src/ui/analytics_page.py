@@ -313,7 +313,15 @@ class AnalyticsPage(QWidget):
     def create_dashboard_tab(self):
         """Create dashboard overview tab"""
         widget = QWidget()
-        layout = QVBoxLayout()
+        
+        # Use scroll area for dashboard content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         
         # Summary cards
         cards_layout = QGridLayout()
@@ -363,13 +371,28 @@ class AnalyticsPage(QWidget):
         patterns_group.setLayout(patterns_layout)
         layout.addWidget(patterns_group)
         
-        widget.setLayout(layout)
+        # Set scroll area content
+        scroll.setWidget(content_widget)
+        
+        # Add scroll area to main widget
+        main_layout = QVBoxLayout(widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
+        
         return widget
     
     def create_trends_tab(self):
         """Create trends analysis tab"""
         widget = QWidget()
-        layout = QVBoxLayout()
+        
+        # Use scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         
         if MATPLOTLIB_AVAILABLE:
             # Trend type selector
@@ -390,13 +413,28 @@ class AnalyticsPage(QWidget):
         else:
             layout.addWidget(QLabel("Matplotlib not available. Install with: pip install matplotlib"))
         
-        widget.setLayout(layout)
+        # Set scroll area content
+        scroll.setWidget(content_widget)
+        
+        # Add scroll area to main widget
+        main_layout = QVBoxLayout(widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
+        
         return widget
     
     def create_revenue_tab(self):
         """Create revenue analysis tab"""
         widget = QWidget()
-        layout = QVBoxLayout()
+        
+        # Use scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         
         # Revenue summary cards
         cards_layout = QGridLayout()
@@ -422,13 +460,28 @@ class AnalyticsPage(QWidget):
             revenue_chart_group.setLayout(revenue_chart_layout)
             layout.addWidget(revenue_chart_group)
         
-        widget.setLayout(layout)
+        # Set scroll area content
+        scroll.setWidget(content_widget)
+        
+        # Add scroll area to main widget
+        main_layout = QVBoxLayout(widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
+        
         return widget
     
     def create_forecast_tab(self):
         """Create forecast tab"""
         widget = QWidget()
-        layout = QVBoxLayout()
+        
+        # Use scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         
         # Forecast controls
         controls_layout = QHBoxLayout()
@@ -471,7 +524,14 @@ class AnalyticsPage(QWidget):
         revenue_forecast_group.setLayout(revenue_forecast_layout)
         layout.addWidget(revenue_forecast_group)
         
-        widget.setLayout(layout)
+        # Set scroll area content
+        scroll.setWidget(content_widget)
+        
+        # Add scroll area to main widget
+        main_layout = QVBoxLayout(widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
+        
         return widget
     
     def on_period_changed(self, period):

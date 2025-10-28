@@ -3,21 +3,26 @@ Search Plate Page for ANPR System
 Allows searching vehicle logs by plate number, date range, and other filters
 """
 
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, 
-                           QPushButton, QLineEdit, QComboBox, QDateEdit, QTableWidget, 
-                           QTableWidgetItem, QHeaderView, QGroupBox, QSplitter, QProgressBar,
-                           QMessageBox, QFileDialog, QMenu, QAction)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDate
-from PyQt5.QtGui import QFont, QPixmap, QIcon, QColor
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import and_, or_, desc
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+                           QLineEdit, QComboBox, QDateEdit, QTableWidget, QTableWidgetItem,
+                           QGroupBox, QFormLayout, QMessageBox, QProgressBar, QHeaderView,
+                           QAbstractItemView, QDialog, QTextEdit, QScrollArea, QFrame, QSplitter)
+from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
+from PyQt5.QtGui import QPixmap, QColor, QFont
 from datetime import datetime, timedelta
-import traceback
 import os
+
+# Import modern UI components
+try:
+    from .ui_components import ActionButton
+    UI_COMPONENTS_AVAILABLE = True
+except ImportError:
+    UI_COMPONENTS_AVAILABLE = False
 
 # Import database models
 try:
     from src.db.models import VehicleLog, RawLog, Camera, ToggleMode
+    from sqlalchemy import desc
 except ImportError:
     print("Warning: Database models not available")
 
@@ -292,29 +297,7 @@ class SearchPlatePage(QWidget):
         header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Edited
         header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Actions
         
-        # Style the table
-        self.results_table.setStyleSheet("""
-            QTableWidget {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                background-color: white;
-                gridline-color: #f0f0f0;
-            }
-            QTableWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #f0f0f0;
-            }
-            QTableWidget::item:selected {
-                background-color: #007bff;
-                color: white;
-            }
-            QHeaderView::section {
-                background-color: #f8f9fa;
-                padding: 8px;
-                border: 1px solid #dee2e6;
-                font-weight: bold;
-            }
-        """)
+        # Use global stylesheet - no inline styling needed
         
     def setup_connections(self):
         """Setup signal connections"""
@@ -486,18 +469,24 @@ class SearchPlatePage(QWidget):
         """Create actions widget for table row"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
         
-        # View details button
-        view_btn = QPushButton("👁️")
-        view_btn.setToolTip("View Details")
-        view_btn.setMaximumSize(30, 30)
+        if UI_COMPONENTS_AVAILABLE:
+            # Use modern ActionButton with text
+            view_btn = ActionButton("View", icon="👁", variant="default", tooltip="View Details")
+            edit_btn = ActionButton("Edit", icon="✏", variant="default", tooltip="Edit Plate")
+        else:
+            # Fallback to regular buttons with text
+            view_btn = QPushButton("👁 View")
+            view_btn.setToolTip("View Details")
+            view_btn.setStyleSheet("padding: 6px 12px; min-width: 60px; background-color: #3498DB; color: white; border-radius: 4px;")
+            
+            edit_btn = QPushButton("✏ Edit")
+            edit_btn.setToolTip("Edit Plate")
+            edit_btn.setStyleSheet("padding: 6px 12px; min-width: 60px; background-color: #3498DB; color: white; border-radius: 4px;")
+        
         view_btn.clicked.connect(lambda: self.view_details(result))
-        
-        # Edit button
-        edit_btn = QPushButton("✏️")
-        edit_btn.setToolTip("Edit Plate")
-        edit_btn.setMaximumSize(30, 30)
         edit_btn.clicked.connect(lambda: self.edit_plate(result))
         
         layout.addWidget(view_btn)
@@ -676,71 +665,80 @@ Edit Reason: {result.get('edit_reason', 'N/A')}
         if button_type == "primary":
             return """
                 QPushButton {
-                    background-color: #007bff;
+                    background-color: #3498DB;
                     color: white;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 8px;
                     font-size: 14px;
-                    font-weight: bold;
-                    padding: 10px 20px;
+                    font-weight: 600;
+                    padding: 12px 24px;
+                    min-width: 100px;
+                    min-height: 40px;
                 }
                 QPushButton:hover {
-                    background-color: #0056b3;
+                    background-color: #2980B9;
                 }
                 QPushButton:pressed {
-                    background-color: #004085;
+                    background-color: #2C3E50;
                 }
                 QPushButton:disabled {
-                    background-color: #6c757d;
+                    background-color: #95A5A6;
                 }
             """
         elif button_type == "success":
             return """
                 QPushButton {
-                    background-color: #28a745;
+                    background-color: #27AE60;
                     color: white;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 8px;
                     font-size: 14px;
-                    font-weight: bold;
-                    padding: 10px 20px;
+                    font-weight: 600;
+                    padding: 12px 24px;
+                    min-width: 120px;
+                    min-height: 40px;
                 }
                 QPushButton:hover {
-                    background-color: #218838;
+                    background-color: #229954;
                 }
                 QPushButton:pressed {
-                    background-color: #1e7e34;
+                    background-color: #1E8449;
                 }
                 QPushButton:disabled {
-                    background-color: #6c757d;
+                    background-color: #95A5A6;
                 }
             """
         elif button_type == "disabled":
             return """
                 QPushButton {
-                    background-color: #6c757d;
-                    color: #adb5bd;
+                    background-color: #95A5A6;
+                    color: #ECF0F1;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 8px;
                     font-size: 14px;
-                    font-weight: bold;
-                    padding: 10px 20px;
+                    font-weight: 600;
+                    padding: 12px 24px;
+                    min-width: 120px;
+                    min-height: 40px;
                 }
             """
         else:  # secondary
             return """
                 QPushButton {
-                    background-color: #6c757d;
+                    background-color: #95A5A6;
                     color: white;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 8px;
                     font-size: 14px;
-                    padding: 10px 20px;
+                    font-weight: 600;
+                    padding: 12px 24px;
+                    min-width: 80px;
+                    min-height: 40px;
                 }
                 QPushButton:hover {
-                    background-color: #545b62;
+                    background-color: #7F8C8D;
                 }
                 QPushButton:pressed {
-                    background-color: #3d4142;
+                    background-color: #2C3E50;
                 }
             """

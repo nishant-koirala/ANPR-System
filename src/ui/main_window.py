@@ -22,6 +22,15 @@ from config import settings
 from config.license_formats import FORMAT_DISPLAY_NAMES
 from .rbac_ui_controller import RBACUIController
 
+# Modern UI imports
+try:
+    from .ui_styles import get_global_stylesheet, get_sidebar_stylesheet, Colors
+    from .ui_components import ModernCard, StatsCard, ModernButton, PageHeader
+    UI_STYLES_AVAILABLE = True
+except ImportError:
+    UI_STYLES_AVAILABLE = False
+    print("Warning: Modern UI styles not available")
+
 class PlateDetectorDashboard(QWidget):
     trackerTypeChanged = pyqtSignal(str)
     def __init__(self, auth_manager=None):
@@ -498,11 +507,17 @@ class PlateDetectorDashboard(QWidget):
 
     def build_ui(self):
         """Build the main UI"""
+        # Apply global stylesheet if available
+        if UI_STYLES_AVAILABLE:
+            self.setStyleSheet(get_global_stylesheet())
+        
         main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # Sidebar
         self.sidebar = QListWidget()
-        self.sidebar.setFixedWidth(150)
+        self.sidebar.setFixedWidth(220)
         
         # Stack widget - build first
         self.stack = QStackedWidget()
@@ -549,14 +564,24 @@ class PlateDetectorDashboard(QWidget):
         
         self.sidebar.addItems(self.sidebar_items)
         self.sidebar.setCurrentRow(0)
-        self.sidebar.setStyleSheet(
-            "QListWidget { background-color: #f5f6fa; font-size: 14px; } "
-            "QListWidget::item { padding: 20px; }"
-        )
+        
+        # Apply modern sidebar styling
+        if UI_STYLES_AVAILABLE:
+            self.sidebar.setStyleSheet(get_sidebar_stylesheet())
+        else:
+            # Fallback styling
+            self.sidebar.setStyleSheet(
+                "QListWidget { background-color: #2C3E50; font-size: 14px; color: #ECF0F1; } "
+                "QListWidget::item { padding: 16px 20px; border-left: 4px solid transparent; } "
+                "QListWidget::item:hover { background-color: #34495E; } "
+                "QListWidget::item:selected { background-color: #34495E; border-left-color: #3498DB; }"
+            )
+        
         self.sidebar.currentRowChanged.connect(self.on_sidebar_changed)
 
+        # Add widgets to main layout
         main_layout.addWidget(self.sidebar)
-        main_layout.addWidget(self.stack)
+        main_layout.addWidget(self.stack, 1)  # Stack takes remaining space
         self.setLayout(main_layout)
 
     def build_database(self):
@@ -676,7 +701,17 @@ class PlateDetectorDashboard(QWidget):
     def build_dashboard_page(self):
         """Build dashboard page"""
         page = QWidget()
-        content_layout = QVBoxLayout(page)
+        
+        # Use scroll area to prevent overlap
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(16)
 
         # Header
         header_layout = QHBoxLayout()
@@ -692,52 +727,86 @@ class PlateDetectorDashboard(QWidget):
         header_layout.addWidget(user)
         content_layout.addLayout(header_layout)
 
-        # Dynamic Cards with counters
+        # Dynamic Cards with counters - Modern StatsCard
         cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(16)
         
-        # Total Tracked Vehicles
-        self.tracked_card = QLabel("Total Tracked\n0")
-        self.tracked_card.setStyleSheet("background-color: #00b894; color: white; border-radius: 10px; padding: 20px;")
-        self.tracked_card.setAlignment(Qt.AlignCenter)
-        self.tracked_card.setFont(QFont("Arial", 11, QFont.Bold))
-        self.tracked_card.setFixedSize(200, 100)
-        
-        # Unique Plates Detected
-        self.unique_plates_card = QLabel("Unique Plates\n0")
-        self.unique_plates_card.setStyleSheet("background-color: #fdcb6e; color: white; border-radius: 10px; padding: 20px;")
-        self.unique_plates_card.setAlignment(Qt.AlignCenter)
-        self.unique_plates_card.setFont(QFont("Arial", 11, QFont.Bold))
-        self.unique_plates_card.setFixedSize(200, 100)
-        
-        # Valid Plates
-        self.valid_plates_card = QLabel("Valid Plates\n0")
-        self.valid_plates_card.setStyleSheet("background-color: #74b9ff; color: white; border-radius: 10px; padding: 20px;")
-        self.valid_plates_card.setAlignment(Qt.AlignCenter)
-        self.valid_plates_card.setFont(QFont("Arial", 11, QFont.Bold))
-        self.valid_plates_card.setFixedSize(200, 100)
-        
-        # Missed/Failed Plates
-        self.missed_plates_card = QLabel("Missed Plates\n0")
-        self.missed_plates_card.setStyleSheet("background-color: #e17055; color: white; border-radius: 10px; padding: 20px;")
-        self.missed_plates_card.setAlignment(Qt.AlignCenter)
-        self.missed_plates_card.setFont(QFont("Arial", 11, QFont.Bold))
-        self.missed_plates_card.setFixedSize(200, 100)
+        if UI_STYLES_AVAILABLE:
+            # Use modern StatsCard components
+            self.tracked_card = StatsCard("Total Tracked", "0", "🚗", Colors.SUCCESS)
+            self.unique_plates_card = StatsCard("Unique Plates", "0", "🔢", Colors.INFO)
+            self.valid_plates_card = StatsCard("Valid Plates", "0", "✓", Colors.ACCENT)
+            self.missed_plates_card = StatsCard("Missed Plates", "0", "⚠️", Colors.WARNING)
+        else:
+            # Fallback to old style but with better colors
+            self.tracked_card = QLabel("Total Tracked\n0")
+            self.tracked_card.setStyleSheet(f"background-color: {Colors.SUCCESS if UI_STYLES_AVAILABLE else '#27AE60'}; color: white; border-radius: 10px; padding: 20px;")
+            self.tracked_card.setAlignment(Qt.AlignCenter)
+            self.tracked_card.setFont(QFont("Arial", 11, QFont.Bold))
+            self.tracked_card.setFixedSize(200, 100)
+            
+            self.unique_plates_card = QLabel("Unique Plates\n0")
+            self.unique_plates_card.setStyleSheet(f"background-color: {Colors.INFO if UI_STYLES_AVAILABLE else '#1ABC9C'}; color: white; border-radius: 10px; padding: 20px;")
+            self.unique_plates_card.setAlignment(Qt.AlignCenter)
+            self.unique_plates_card.setFont(QFont("Arial", 11, QFont.Bold))
+            self.unique_plates_card.setFixedSize(200, 100)
+            
+            self.valid_plates_card = QLabel("Valid Plates\n0")
+            self.valid_plates_card.setStyleSheet(f"background-color: {Colors.ACCENT if UI_STYLES_AVAILABLE else '#3498DB'}; color: white; border-radius: 10px; padding: 20px;")
+            self.valid_plates_card.setAlignment(Qt.AlignCenter)
+            self.valid_plates_card.setFont(QFont("Arial", 11, QFont.Bold))
+            self.valid_plates_card.setFixedSize(200, 100)
+            
+            self.missed_plates_card = QLabel("Missed Plates\n0")
+            self.missed_plates_card.setStyleSheet(f"background-color: {Colors.WARNING if UI_STYLES_AVAILABLE else '#E67E22'}; color: white; border-radius: 10px; padding: 20px;")
+            self.missed_plates_card.setAlignment(Qt.AlignCenter)
+            self.missed_plates_card.setFont(QFont("Arial", 11, QFont.Bold))
+            self.missed_plates_card.setFixedSize(200, 100)
         
         cards_layout.addWidget(self.tracked_card)
         cards_layout.addWidget(self.unique_plates_card)
         cards_layout.addWidget(self.valid_plates_card)
         cards_layout.addWidget(self.missed_plates_card)
+        cards_layout.addStretch()
         content_layout.addLayout(cards_layout)
 
-        # Preview + controls
-        preview_layout = QVBoxLayout()
+        # Create horizontal layout for video preview and plates panel
+        preview_hbox = QHBoxLayout()
+        preview_hbox.setSpacing(16)
+        
+        # Left side: Video preview container
+        preview_container = QWidget()
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(8)
+        
+        # Video preview label
         self.image_label = QLabel("Preview")
-        self.image_label.setFixedSize(700, 400)
+        self.image_label.setMinimumSize(700, 400)
+        self.image_label.setMaximumHeight(600)  # Prevent excessive growth
         self.image_label.setStyleSheet("border: 1px solid #ccc; background-color: black")
         self.image_label.setAlignment(Qt.AlignCenter)
-
-        # Controls
+        self.image_label.setScaledContents(False)
+        preview_layout.addWidget(self.image_label)
+        
+        # Progress slider
+        self.progress_slider = QSlider(Qt.Horizontal)
+        self.progress_slider.setMinimum(0)
+        self.progress_slider.setMaximum(0)
+        self.progress_slider.sliderPressed.connect(self.on_slider_pressed)
+        self.progress_slider.sliderReleased.connect(self.on_slider_released)
+        self.progress_slider.sliderMoved.connect(self.on_slider_moved)
+        preview_layout.addWidget(self.progress_slider)
+        
+        # Time label
+        self.time_label = QLabel("00:00 / 00:00")
+        self.time_label.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(self.time_label)
+        
+        # Playback controls - ALWAYS below video
         controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(8)
+        
         self.play_btn = QPushButton("▶ Play")
         self.play_btn.clicked.connect(self.toggle_video)
         self.stop_btn = QPushButton("⏹ Stop")
@@ -746,11 +815,11 @@ class PlateDetectorDashboard(QWidget):
         self.step_back_btn.clicked.connect(lambda: self.step_frame(-1))
         self.step_fwd_btn = QPushButton("⏭ Frame+")
         self.step_fwd_btn.clicked.connect(lambda: self.step_frame(1))
+        
         # Defensive: ensure step buttons do not auto-repeat on press-and-hold
         try:
             self.step_back_btn.setAutoRepeat(False)
             self.step_fwd_btn.setAutoRepeat(False)
-            # Avoid accidental activation via Enter key focus defaults
             self.step_back_btn.setAutoDefault(False)
             self.step_fwd_btn.setAutoDefault(False)
         except Exception:
@@ -779,24 +848,14 @@ class PlateDetectorDashboard(QWidget):
         self.loop_checkbox = QCheckBox("Loop")
         self.loop_checkbox.stateChanged.connect(lambda s: setattr(self, 'loop_enabled', self.loop_checkbox.isChecked()))
         controls_layout.addWidget(self.loop_checkbox)
-
-        # Progress slider and time label
-        self.progress_slider = QSlider(Qt.Horizontal)
-        self.progress_slider.setMinimum(0)
-        self.progress_slider.setMaximum(0)
-        self.progress_slider.sliderPressed.connect(self.on_slider_pressed)
-        self.progress_slider.sliderReleased.connect(self.on_slider_released)
-        self.progress_slider.sliderMoved.connect(self.on_slider_moved)
-        self.time_label = QLabel("00:00 / 00:00")
-
-        preview_layout.addWidget(self.image_label)
-        preview_layout.addWidget(self.progress_slider)
-        preview_layout.addWidget(self.time_label)
+        controls_layout.addStretch()  # Push controls to the left
+        
         preview_layout.addLayout(controls_layout)
-
-        # Plate Detection Preview Panel
+        
+        # Right side: Plate Detection Preview Panel
         plates_panel = QGroupBox("Detected Plates (All)")
-        plates_panel.setFixedSize(400, 400)
+        plates_panel.setMinimumSize(350, 400)
+        plates_panel.setMaximumWidth(450)
         plates_panel_layout = QVBoxLayout(plates_panel)
         
         # Scrollable area for plate images
@@ -808,9 +867,10 @@ class PlateDetectorDashboard(QWidget):
         self.plates_scroll_area.setWidget(self.plates_container)
         plates_panel_layout.addWidget(self.plates_scroll_area)
 
-        preview_hbox = QHBoxLayout()
-        preview_hbox.addLayout(preview_layout)
-        preview_hbox.addWidget(plates_panel)
+        # Add both to horizontal layout
+        preview_hbox.addWidget(preview_container, 1)  # Give preview more space
+        preview_hbox.addWidget(plates_panel, 0)  # Fixed width panel
+        
         content_layout.addLayout(preview_hbox)
 
         # Upload and Live buttons
@@ -934,6 +994,12 @@ class PlateDetectorDashboard(QWidget):
         self.table.setHorizontalHeaderLabels(["S.no", "Plate Image", "Plate No. (Vehicle ID)", "Type", "Date", "TimeStamp", "Site (Confidence)"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
+        # Set scroll area content and add to page
+        scroll.setWidget(content_widget)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+        
         return page
 
     def add_vehicle_to_log(self, vehicle_id, plate_text, plate_img, status="PRESENT"):
@@ -2002,10 +2068,18 @@ class PlateDetectorDashboard(QWidget):
 
     def update_dashboard_cards(self):
         """Update dashboard cards with current statistics"""
-        self.tracked_card.setText(f"Total Tracked\n{self.total_tracked}")
-        self.unique_plates_card.setText(f"Unique Plates\n{self.unique_plates_detected}")
-        self.valid_plates_card.setText(f"Valid Plates\n{self.valid_plates_count}")
-        self.missed_plates_card.setText(f"Missed Plates\n{self.missed_plates_count}")
+        if UI_STYLES_AVAILABLE and hasattr(self.tracked_card, 'set_value'):
+            # Modern StatsCard
+            self.tracked_card.set_value(str(self.total_tracked))
+            self.unique_plates_card.set_value(str(self.unique_plates_detected))
+            self.valid_plates_card.set_value(str(self.valid_plates_count))
+            self.missed_plates_card.set_value(str(self.missed_plates_count))
+        else:
+            # Old QLabel style
+            self.tracked_card.setText(f"Total Tracked\n{self.total_tracked}")
+            self.unique_plates_card.setText(f"Unique Plates\n{self.unique_plates_detected}")
+            self.valid_plates_card.setText(f"Valid Plates\n{self.valid_plates_count}")
+            self.missed_plates_card.setText(f"Missed Plates\n{self.missed_plates_count}")
     
     def add_plate_to_preview(self, plate_img, vehicle_id, ocr_text, confidence, is_valid):
         """Add detected plate to the preview panel"""
