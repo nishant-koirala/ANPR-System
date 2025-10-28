@@ -310,9 +310,21 @@ class UserManagementPage(QWidget):
                                   "Please log in to access user management")
                 return False
             
-            # Get user ID safely to avoid detached instance issues
+            # Get user ID safely using current_username
             try:
-                user_id = self.auth_manager.current_user.user_id
+                if not self.auth_manager.current_username:
+                    QMessageBox.warning(self, "Not Logged In",
+                                      "Please log in to access user management")
+                    return False
+                
+                # Get user ID from username
+                with self.auth_manager.get_session() as session:
+                    from ..db.rbac_models import User
+                    user = session.query(User).filter(User.username == self.auth_manager.current_username).first()
+                    if not user:
+                        return False
+                    user_id = user.user_id
+                
                 if not self.auth_manager.has_permission(user_id, Permissions.MANAGE_USERS):
                     QMessageBox.warning(self, "Access Denied", 
                                       "You don't have permission to manage users")
@@ -357,14 +369,13 @@ class UserManagementPage(QWidget):
         """Load users from database"""
         try:
             # Check permissions if user is logged in
-            if self.auth_manager.current_user:
+            if self.auth_manager.current_username:
                 try:
-                    # Get user ID safely to avoid detached instance issues
+                    # Get user ID from username
                     with self.auth_manager.get_session() as session:
-                        # Re-query the current user to get a fresh instance
                         from ..db.rbac_models import User
                         current_user = session.query(User).filter(
-                            User.user_id == self.auth_manager.current_user.user_id
+                            User.username == self.auth_manager.current_username
                         ).first()
                         
                         if current_user and not self.auth_manager.has_permission(current_user.user_id, Permissions.VIEW_AUDIT_LOGS):

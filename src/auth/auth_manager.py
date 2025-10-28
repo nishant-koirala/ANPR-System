@@ -135,12 +135,14 @@ class AuthManager:
                 # Handle detached session - clear current session and return
                 self.current_user = None
                 self.current_session = None
+                self.current_username = None
                 return True
         
         if not session_id:
             # Clear current user/session even if no session_id
             self.current_user = None
             self.current_session = None
+            self.current_username = None
             return False
         
         with self.get_session() as session:
@@ -159,6 +161,7 @@ class AuthManager:
                 # Clear current user/session
                 self.current_user = None
                 self.current_session = None
+                self.current_username = None
                 
                 return True
         

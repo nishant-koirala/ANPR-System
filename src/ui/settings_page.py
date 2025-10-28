@@ -13,10 +13,12 @@ from PyQt5.QtGui import QPixmap, QImage, QFont
 from PyQt5.QtCore import Qt, QTimer
 
 class SettingsPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, rbac_controller=None):
         super().__init__(parent)
         self.parent = parent
+        self.rbac_controller = rbac_controller
         self.build_ui()
+        self.apply_permissions()
 
     def build_ui(self):
         """Build settings page"""
@@ -110,15 +112,15 @@ class SettingsPage(QWidget):
 
         # Save and Apply buttons
         btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Save Settings")
-        save_btn.clicked.connect(self.save_settings)
-        save_btn.setStyleSheet("padding: 10px; background-color: #27ae60; color: white; border-radius: 5px;")
-        apply_btn = QPushButton("Apply Settings")
-        apply_btn.clicked.connect(self.apply_runtime_settings)
-        apply_btn.setStyleSheet("padding: 10px; background-color: #2980b9; color: white; border-radius: 5px;")
+        self.save_btn = QPushButton("Save Settings")
+        self.save_btn.clicked.connect(self.save_settings)
+        self.save_btn.setStyleSheet("padding: 10px; background-color: #27ae60; color: white; border-radius: 5px;")
+        self.apply_btn = QPushButton("Apply Settings")
+        self.apply_btn.clicked.connect(self.apply_runtime_settings)
+        self.apply_btn.setStyleSheet("padding: 10px; background-color: #2980b9; color: white; border-radius: 5px;")
         btn_layout.addStretch()
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(apply_btn)
+        btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.apply_btn)
         content_layout.addLayout(btn_layout)
 
     def create_model_settings(self):
@@ -459,6 +461,17 @@ class SettingsPage(QWidget):
 
     def save_settings(self):
         """Save settings to config module"""
+        # Check permission
+        if self.rbac_controller and not self.rbac_controller.can_modify_settings():
+            QMessageBox.warning(
+                self,
+                "Permission Denied",
+                f"You don't have permission to modify settings.\n\n"
+                f"Your role: {self.rbac_controller.get_role_display_name()}\n"
+                f"Required: Admin or higher"
+            )
+            return
+        
         try:
             self.save_parking_settings()
             self.save_format_settings()
@@ -634,3 +647,34 @@ class SettingsPage(QWidget):
         """Apply settings to the running application"""
         # This method will be implemented in the main window
         pass
+    
+    def apply_permissions(self):
+        """Apply RBAC permissions to settings page"""
+        if not self.rbac_controller:
+            return
+        
+        # Check if user can modify settings
+        can_modify = self.rbac_controller.can_modify_settings()
+        
+        if not can_modify:
+            # Disable save and apply buttons
+            if hasattr(self, 'save_btn'):
+                self.save_btn.setEnabled(False)
+                self.save_btn.setToolTip("Modify settings permission required (Admin role or higher)")
+                self.save_btn.setStyleSheet("padding: 10px; background-color: #6c757d; color: #adb5bd; border-radius: 5px;")
+            
+            if hasattr(self, 'apply_btn'):
+                self.apply_btn.setEnabled(False)
+                self.apply_btn.setToolTip("Modify settings permission required (Admin role or higher)")
+                self.apply_btn.setStyleSheet("padding: 10px; background-color: #6c757d; color: #adb5bd; border-radius: 5px;")
+            
+            # Disable all input widgets
+            self.set_widgets_readonly(self, True)
+    
+    def set_widgets_readonly(self, parent_widget, readonly=True):
+        """Recursively set all input widgets to readonly/disabled"""
+        for child in parent_widget.findChildren(QWidget):
+            if isinstance(child, (QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton)):
+                child.setEnabled(not readonly)
+            elif isinstance(child, QLineEdit):
+                child.setReadOnly(readonly)

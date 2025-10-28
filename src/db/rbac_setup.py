@@ -71,7 +71,8 @@ def initialize_rbac_system(db_session_factory, admin_username: str = "admin", ad
                 Permissions.MANAGE_USERS, Permissions.VIEW_AUDIT_LOGS, Permissions.VIEW_DASHBOARD,
                 Permissions.VIEW_VEHICLE_LOGS, Permissions.DELETE_VEHICLE_LOGS, Permissions.EXPORT_DATA,
                 Permissions.CONFIG_CAMERAS, Permissions.VIEW_CAMERA_STATUS, Permissions.VIEW_DATABASE,
-                Permissions.BACKUP_DATABASE, Permissions.MODIFY_SETTINGS, Permissions.VIEW_SETTINGS
+                Permissions.MANAGE_DATABASE, Permissions.BACKUP_DATABASE, Permissions.MODIFY_SETTINGS, 
+                Permissions.VIEW_SETTINGS
             ]),
             (Roles.OPERATOR, "Operational access", [
                 Permissions.VIEW_DASHBOARD, Permissions.VIEW_VEHICLE_LOGS, Permissions.EXPORT_DATA,

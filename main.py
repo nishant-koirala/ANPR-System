@@ -45,8 +45,8 @@ class ANPRApplication(PlateDetectorDashboard):
     # Signal to request vehicle model reload in worker
     reloadRequested = pyqtSignal(str)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, auth_manager=None):
+        super().__init__(auth_manager=auth_manager)
 
         # Initialize database and toggle manager
         self.db = get_database()
@@ -112,9 +112,8 @@ class ANPRApplication(PlateDetectorDashboard):
             # Get or create default camera
             self.camera_id = self.db.get_or_create_camera("MAIN_CAM", "Video Processing")
             
-            # Initialize simple authentication
-            from src.auth.simple_auth import SimpleAuthManager
-            self.simple_auth = SimpleAuthManager(self.db.get_session)
+            # Note: RBAC authentication is handled by auth_manager passed to __init__
+            # No need for separate simple_auth
             
             print(f"✅ Database initialized - Camera ID: {self.camera_id}")
             
@@ -545,40 +544,57 @@ class ANPRApplication(PlateDetectorDashboard):
 
 def main():
     """Main application entry point"""
-    app = QApplication(sys.argv)
     
-    # Initialize RBAC system
-    try:
-        from src.ui.rbac_integration import RBACManager, integrate_rbac_with_main_window
-        from src.db.database import get_database
+    # Restart loop - allows returning to login after logout
+    while True:
+        # Check if QApplication instance already exists
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        else:
+            # Clear any existing widgets
+            for widget in app.allWidgets():
+                widget.close()
         
-        # Setup RBAC manager
-        db = get_database()
-        rbac_manager = RBACManager(db.get_session)
+        # Initialize RBAC system
+        try:
+            from src.ui.rbac_integration import RBACManager, integrate_rbac_with_main_window
+            from src.db.database import get_database
+            
+            # Setup RBAC manager
+            db = get_database()
+            rbac_manager = RBACManager(db.get_session)
+            
+            # Show login dialog first
+            if not rbac_manager.show_login_dialog():
+                # User cancelled login or authentication failed
+                sys.exit(0)
+            
+            # Create main window after successful login with authenticated auth_manager
+            anpr_app = ANPRApplication(auth_manager=rbac_manager.auth_manager)
+            
+            # Integrate RBAC with main window
+            integrate_rbac_with_main_window(anpr_app, rbac_manager)
+            
+            anpr_app.show()
+            
+        except ImportError as e:
+            print(f"RBAC system not available: {e}")
+            print("Running without authentication...")
+            
+            # Fallback to non-authenticated mode
+            anpr_app = ANPRApplication()
+            anpr_app.show()
         
-        # Show login dialog first
-        if not rbac_manager.show_login_dialog():
-            # User cancelled login or authentication failed
-            sys.exit(0)
+        # Start event loop
+        exit_code = app.exec_()
         
-        # Create main window after successful login
-        anpr_app = ANPRApplication()
+        # If exit code is 1, restart with login screen
+        # If exit code is 0, exit normally
+        if exit_code != 1:
+            sys.exit(exit_code)
         
-        # Integrate RBAC with main window
-        integrate_rbac_with_main_window(anpr_app, rbac_manager)
-        
-        anpr_app.show()
-        
-    except ImportError as e:
-        print(f"RBAC system not available: {e}")
-        print("Running without authentication...")
-        
-        # Fallback to non-authenticated mode
-        anpr_app = ANPRApplication()
-        anpr_app.show()
-    
-    # Start event loop
-    sys.exit(app.exec_())
+        print("DEBUG: Restarting application for new login...")
 
 if __name__ == "__main__":
     main()

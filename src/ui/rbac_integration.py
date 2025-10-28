@@ -81,6 +81,18 @@ def integrate_rbac_with_main_window(main_window, rbac_manager):
     # Store RBAC manager reference
     main_window.rbac_manager = rbac_manager
     
+    # Update main window's auth_manager with the authenticated one
+    main_window.auth_manager = rbac_manager.auth_manager
+    
+    # Reinitialize RBAC controller with the authenticated auth_manager
+    from .rbac_ui_controller import RBACUIController
+    main_window.rbac_controller = RBACUIController(rbac_manager.auth_manager)
+    
+    # Rebuild sidebar to show User Management if user has permission
+    if hasattr(main_window, 'rebuild_sidebar'):
+        main_window.rebuild_sidebar()
+        print(f"DEBUG: Sidebar rebuilt after integrating RBAC (user: {rbac_manager.auth_manager.current_username})")
+    
     # Connect signals
     rbac_manager.user_logged_in.connect(lambda user: on_user_login(main_window, user))
     rbac_manager.user_logged_out.connect(lambda: on_user_logout(main_window))
@@ -165,6 +177,10 @@ def on_user_logout(main_window):
             main_window.sidebar.takeItem(i)
             break
     
-    # Close the application after logout
+    # Close the main window to trigger restart
+    # This will return to the login screen
+    main_window.close()
+    
+    # Set exit code to trigger restart in main.py
     from PyQt5.QtWidgets import QApplication
-    QApplication.quit()
+    QApplication.instance().exit(1)  # Exit code 1 = restart with login

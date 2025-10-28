@@ -274,9 +274,10 @@ class PlateEditDialog(QDialog):
 class DatabasePage(QWidget):
     """Database management and viewing page"""
     
-    def __init__(self):
+    def __init__(self, rbac_controller=None):
         super().__init__()
         self.db = None
+        self.rbac_controller = rbac_controller
         self.init_database()
         self.setup_ui()
         self.setup_refresh_timer()
@@ -860,6 +861,17 @@ class DatabasePage(QWidget):
         """Handle double-click on table items for editing"""
         if not item:
             return
+        
+        # Check permissions before allowing edit
+        if self.rbac_controller and not self.rbac_controller.can_edit_plates():
+            QMessageBox.warning(
+                self,
+                "Permission Denied",
+                f"You don't have permission to edit plate numbers.\n\n"
+                f"Your role: {self.rbac_controller.get_role_display_name()}\n"
+                f"Required: Admin or higher"
+            )
+            return
             
         row = item.row()
         col = item.column()
@@ -870,6 +882,15 @@ class DatabasePage(QWidget):
     
     def edit_plate_number(self, row):
         """Edit plate number for the selected row with image display"""
+        # Double-check permissions
+        if self.rbac_controller and not self.rbac_controller.can_edit_plates():
+            QMessageBox.warning(
+                self,
+                "Permission Denied",
+                "You don't have permission to edit plate numbers."
+            )
+            return
+        
         try:
             # Get log_id from the first column
             log_id_item = self.vehicle_table.item(row, 0)

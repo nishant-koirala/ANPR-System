@@ -20,13 +20,20 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from sort.sort import Sort
 from config import settings
 from config.license_formats import FORMAT_DISPLAY_NAMES
+from .rbac_ui_controller import RBACUIController
 
 class PlateDetectorDashboard(QWidget):
     trackerTypeChanged = pyqtSignal(str)
-    def __init__(self):
+    def __init__(self, auth_manager=None):
         super().__init__()
         self.setWindowTitle("ANPR - Entry Gate System")
         self.setGeometry(100, 100, 1400, 900)
+
+        # Initialize auth manager and RBAC controller
+        self.auth_manager = auth_manager  # Use provided auth_manager if available
+        self.rbac_controller = None
+        print(f"DEBUG PlateDetectorDashboard.__init__: auth_manager provided={auth_manager is not None}, username={auth_manager.current_username if auth_manager else 'None'}")
+        self.initialize_auth()
 
         # Initialize components
         # Ensure tracker_type is available before models are set up
@@ -118,6 +125,33 @@ class PlateDetectorDashboard(QWidget):
         
         # Connect timer
         self.timer.timeout.connect(self.read_frame)
+    
+    def initialize_auth(self):
+        """Initialize authentication manager and RBAC controller"""
+        try:
+            from ..auth.auth_manager import AuthManager
+            from ..db.database import get_database
+            
+            # Only create new auth_manager if one wasn't provided
+            if not self.auth_manager:
+                # Get database instance and use its session factory
+                db = get_database()
+                self.auth_manager = AuthManager(db.get_session)
+                print("DEBUG: Created new auth manager")
+            else:
+                print(f"DEBUG: Using provided auth manager (user: {self.auth_manager.current_username})")
+            
+            # Always create RBAC controller with the auth manager
+            self.rbac_controller = RBACUIController(self.auth_manager)
+            print("DEBUG: RBAC controller initialized")
+            
+            # Rebuild sidebar to reflect current login state
+            if hasattr(self, 'sidebar'):
+                self.rebuild_sidebar()
+        except Exception as e:
+            print(f"DEBUG: Failed to initialize auth manager: {e}")
+            import traceback
+            traceback.print_exc()
 
     def setup_temp_dirs(self):
         """Create session temp directories and configure debug saving"""
@@ -469,14 +503,38 @@ class PlateDetectorDashboard(QWidget):
         # Sidebar
         self.sidebar = QListWidget()
         self.sidebar.setFixedWidth(150)
-        self.sidebar.addItems([
-            "▶ Dashboard",
-            "🚗 Vehicle Log", 
-            "👥 User Management",
-            "🔍 Search Plate",
-            "⚙ Settings",
-            "🚪 Logout"
-        ])
+        
+        # Build sidebar items based on permissions
+        self.sidebar_items = []
+        self.sidebar_pages = []  # Map sidebar index to page index
+        
+        # Dashboard - all users
+        self.sidebar_items.append("▶ Dashboard")
+        self.sidebar_pages.append(0)
+        
+        # Vehicle Log - all users
+        self.sidebar_items.append("🚗 Vehicle Log")
+        self.sidebar_pages.append(1)
+        
+        # User Management - Admin and above only
+        if self.rbac_controller and self.rbac_controller.can_manage_users():
+            self.sidebar_items.append("👥 User Management")
+            self.sidebar_pages.append(2)
+        
+        # Search Plate - all users
+        self.sidebar_items.append("🔍 Search Plate")
+        self.sidebar_pages.append(3)
+        
+        # Settings - all users (view-only for Viewer/Operator)
+        if self.rbac_controller and self.rbac_controller.can_view_settings():
+            self.sidebar_items.append("⚙ Settings")
+            self.sidebar_pages.append(4)
+        
+        # Logout - all users
+        self.sidebar_items.append("🚪 Logout")
+        self.sidebar_pages.append(-1)  # Special case for logout
+        
+        self.sidebar.addItems(self.sidebar_items)
         self.sidebar.setCurrentRow(0)
         self.sidebar.setStyleSheet(
             "QListWidget { background-color: #f5f6fa; font-size: 14px; } "
@@ -507,7 +565,7 @@ class PlateDetectorDashboard(QWidget):
         """Build database page"""
         try:
             from .database_page import DatabasePage
-            return DatabasePage()
+            return DatabasePage(rbac_controller=self.rbac_controller)
         except ImportError as e:
             # Fallback if database page can't be imported
             page = QWidget()
@@ -524,14 +582,15 @@ class PlateDetectorDashboard(QWidget):
             from ..auth.auth_manager import AuthManager
             from ..db.database import get_database
             
-            # Initialize auth manager if not already available
-            if not hasattr(self, 'auth_manager'):
-                # Get database instance and use its session factory
+            # Auth manager should already be initialized in __init__
+            # If not, initialize it now
+            if not self.auth_manager:
                 db = get_database()
                 self.auth_manager = AuthManager(db.get_session)
+                self.rbac_controller = RBACUIController(self.auth_manager)
             
             # Check if user is logged in and has proper permissions
-            if not self.auth_manager.current_user:
+            if not self.auth_manager.current_username:
                 # Create a login prompt page
                 page = QWidget()
                 layout = QVBoxLayout(page)
@@ -961,12 +1020,17 @@ class PlateDetectorDashboard(QWidget):
                 db = get_database()
                 session_factory = db.get_session
             
-            # Pass auth_manager to enable editing functionality
+            # Pass auth_manager and rbac_controller to enable editing functionality
             search_page = SearchPlatePage(session_factory)
             if hasattr(self, 'auth_manager'):
                 search_page.auth_manager = self.auth_manager
             elif hasattr(self, 'simple_auth'):
                 search_page.auth_manager = self.simple_auth
+            
+            # Pass RBAC controller for permission checks
+            if hasattr(self, 'rbac_controller'):
+                search_page.rbac_controller = self.rbac_controller
+            
             return search_page
         except ImportError as e:
             # Fallback if search plate page can't be imported
@@ -989,7 +1053,7 @@ class PlateDetectorDashboard(QWidget):
         """Build settings page"""
         try:
             from .settings_page import SettingsPage
-            return SettingsPage(parent=self)
+            return SettingsPage(parent=self, rbac_controller=self.rbac_controller)
         except ImportError as e:
             # Fallback to simple settings page
             page = QWidget()
@@ -1088,25 +1152,53 @@ class PlateDetectorDashboard(QWidget):
         return page
 
     def on_sidebar_changed(self, index):
-        """Handle sidebar navigation"""
+        """Handle sidebar navigation with RBAC checks"""
         print(f"DEBUG: Sidebar changed to index: {index}")
         
-        if index == 0:  # Dashboard
-            self.stack.setCurrentIndex(0)
-        elif index == 1:  # Vehicle Log
-            self.stack.setCurrentIndex(1)
-        elif index == 2:  # User Management
-            self.stack.setCurrentIndex(2)
-        elif index == 3:  # Search Plate
-            self.stack.setCurrentIndex(3)
-        elif index == 4:  # Settings
-            self.stack.setCurrentIndex(4)
-        elif index == 5:  # Logout
+        if index < 0 or index >= len(self.sidebar_pages):
+            print(f"DEBUG: Invalid sidebar index {index}")
+            return
+        
+        page_index = self.sidebar_pages[index]
+        
+        # Special case for logout
+        if page_index == -1:
             print("DEBUG: Logout option selected")
             self.logout()
-        else:  # Default to Dashboard
-            print(f"DEBUG: Unknown index {index}, defaulting to Dashboard")
-            self.stack.setCurrentIndex(0)
+            return
+        
+        # Special case for login
+        if page_index == -2:
+            print("DEBUG: Login option selected")
+            self.show_login_dialog()
+            return
+        
+        # Check permissions before navigating
+        if page_index == 2:  # User Management
+            if not self.rbac_controller or not self.rbac_controller.can_manage_users():
+                QMessageBox.warning(
+                    self,
+                    "Access Denied",
+                    "You don't have permission to access User Management.\n\n"
+                    f"Required role: Admin or higher\n"
+                    f"Your role: {self.rbac_controller.get_role_display_name() if self.rbac_controller else 'Guest'}"
+                )
+                self.sidebar.setCurrentRow(0)  # Reset to Dashboard
+                return
+        
+        elif page_index == 4:  # Settings
+            if not self.rbac_controller or not self.rbac_controller.can_view_settings():
+                QMessageBox.warning(
+                    self,
+                    "Access Denied",
+                    "You don't have permission to access Settings."
+                )
+                self.sidebar.setCurrentRow(0)  # Reset to Dashboard
+                return
+        
+        # Navigate to the page
+        self.stack.setCurrentIndex(page_index)
+        print(f"DEBUG: Navigated to page index {page_index}")
 
     def logout(self):
         """Handle user logout"""
@@ -1125,10 +1217,13 @@ class PlateDetectorDashboard(QWidget):
                 except Exception as e:
                     print(f"DEBUG: Auth manager logout error: {e}")
             
-            # Reset sidebar to dashboard instead of closing
-            self.sidebar.setCurrentRow(0)
-            self.stack.setCurrentIndex(0)
-            print("DEBUG: Reset to dashboard after logout")
+            # Close the main window and restart to show login screen
+            print("DEBUG: Closing window and restarting for login...")
+            self.close()
+            
+            # Exit with code 1 to trigger restart in main.py
+            from PyQt5.QtWidgets import QApplication
+            QApplication.instance().exit(1)
         else:
             print("DEBUG: User cancelled logout")
             # Reset sidebar selection to previous item
@@ -1178,6 +1273,8 @@ class PlateDetectorDashboard(QWidget):
                 user_data = self.auth_manager.login(username, password)
                 QMessageBox.information(dialog, "Success", f"Welcome, {user_data['full_name'] or username}!")
                 dialog.accept()
+                # Rebuild sidebar to show/hide menu items based on permissions
+                self.rebuild_sidebar()
                 # Force rebuild of User Management page
                 self.rebuild_user_management_page()
             except Exception as e:
@@ -1200,6 +1297,71 @@ class PlateDetectorDashboard(QWidget):
             current_row = self.sidebar.currentRow()
             if current_row >= 0:
                 self.on_sidebar_changed(current_row)
+    
+    def rebuild_sidebar(self):
+        """Rebuild sidebar menu based on current user permissions"""
+        try:
+            # Check if user is logged in
+            is_logged_in = self.auth_manager and self.auth_manager.current_username
+            print(f"DEBUG: Rebuilding sidebar (logged_in={is_logged_in}, username={self.auth_manager.current_username if self.auth_manager else 'None'})")
+            
+            # Store current selection
+            current_row = self.sidebar.currentRow()
+            
+            # Clear sidebar
+            self.sidebar.clear()
+            self.sidebar_items = []
+            self.sidebar_pages = []
+            
+            # Dashboard - all users
+            self.sidebar_items.append("▶ Dashboard")
+            self.sidebar_pages.append(0)
+            
+            # Vehicle Log - all users
+            self.sidebar_items.append("🚗 Vehicle Log")
+            self.sidebar_pages.append(1)
+            
+            # User Management - Admin and above only (when logged in)
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_manage_users():
+                self.sidebar_items.append("👥 User Management")
+                self.sidebar_pages.append(2)
+                print("DEBUG: User Management added to sidebar")
+            else:
+                if is_logged_in:
+                    print(f"DEBUG: User Management NOT added. can_manage_users: {self.rbac_controller.can_manage_users() if self.rbac_controller else 'N/A'}")
+            
+            # Search Plate - all users
+            self.sidebar_items.append("🔍 Search Plate")
+            self.sidebar_pages.append(3)
+            
+            # Settings - all users (view-only for Viewer/Operator)
+            if self.rbac_controller and self.rbac_controller.can_view_settings():
+                self.sidebar_items.append("⚙ Settings")
+                self.sidebar_pages.append(4)
+            
+            # Login/Logout based on login status
+            if is_logged_in:
+                self.sidebar_items.append("🚪 Logout")
+                self.sidebar_pages.append(-1)  # Logout
+            else:
+                self.sidebar_items.append("🔐 Login")
+                self.sidebar_pages.append(-2)  # Login
+            
+            # Add items to sidebar
+            self.sidebar.addItems(self.sidebar_items)
+            
+            # Restore selection or go to dashboard
+            if current_row >= 0 and current_row < len(self.sidebar_items):
+                self.sidebar.setCurrentRow(current_row)
+            else:
+                self.sidebar.setCurrentRow(0)
+            
+            print(f"DEBUG: Sidebar rebuilt with {len(self.sidebar_items)} items")
+            
+        except Exception as e:
+            print(f"DEBUG: Error rebuilding sidebar: {e}")
+            import traceback
+            traceback.print_exc()
     
     def rebuild_user_management_page(self):
         """Rebuild User Management page after login"""

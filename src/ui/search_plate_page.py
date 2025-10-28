@@ -97,6 +97,7 @@ class SearchPlatePage(QWidget):
         self.session_factory = session_factory
         self.search_thread = None
         self.current_results = []
+        self.rbac_controller = None  # Will be set by main window
         
         self.init_ui()
         self.setup_connections()
@@ -198,6 +199,12 @@ class SearchPlatePage(QWidget):
         self.export_button.setMinimumHeight(40)
         self.export_button.setStyleSheet(self.get_button_style("success"))
         self.export_button.setEnabled(False)
+        
+        # Check export permission
+        if self.rbac_controller and not self.rbac_controller.can_export_data():
+            self.export_button.setToolTip("Export permission required (Operator role or higher)")
+            self.export_button.setEnabled(False)
+            self.export_button.setStyleSheet(self.get_button_style("disabled"))
         
         button_layout.addWidget(self.search_button)
         button_layout.addWidget(self.clear_button)
@@ -380,8 +387,11 @@ class SearchPlatePage(QWidget):
         # Populate results table
         self.populate_results_table(results)
         
-        # Enable export if we have results
-        self.export_button.setEnabled(count > 0)
+        # Enable export if we have results AND user has permission
+        can_export = count > 0
+        if self.rbac_controller:
+            can_export = can_export and self.rbac_controller.can_export_data()
+        self.export_button.setEnabled(can_export)
         
     def on_search_failed(self, error_message):
         """Handle search failure"""
@@ -582,6 +592,17 @@ Edit Reason: {result.get('edit_reason', 'N/A')}
         
     def export_results(self):
         """Export search results to CSV"""
+        # Check permission
+        if self.rbac_controller and not self.rbac_controller.can_export_data():
+            QMessageBox.warning(
+                self,
+                "Permission Denied",
+                f"You don't have permission to export data.\n\n"
+                f"Your role: {self.rbac_controller.get_role_display_name()}\n"
+                f"Required: Operator or higher"
+            )
+            return
+        
         if not self.current_results:
             QMessageBox.information(self, "No Data", "No results to export.")
             return
@@ -692,6 +713,18 @@ Edit Reason: {result.get('edit_reason', 'N/A')}
                 }
                 QPushButton:disabled {
                     background-color: #6c757d;
+                }
+            """
+        elif button_type == "disabled":
+            return """
+                QPushButton {
+                    background-color: #6c757d;
+                    color: #adb5bd;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    padding: 10px 20px;
                 }
             """
         else:  # secondary
