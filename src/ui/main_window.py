@@ -504,31 +504,44 @@ class PlateDetectorDashboard(QWidget):
         self.sidebar = QListWidget()
         self.sidebar.setFixedWidth(150)
         
-        # Build sidebar items based on permissions
+        # Stack widget - build first
+        self.stack = QStackedWidget()
+        
+        # Build sidebar items and add pages to stack dynamically
         self.sidebar_items = []
-        self.sidebar_pages = []  # Map sidebar index to page index
+        self.sidebar_pages = []  # Map sidebar index to stack page index
         
         # Dashboard - all users
         self.sidebar_items.append("▶ Dashboard")
-        self.sidebar_pages.append(0)
+        self.dashboard_page = self.build_dashboard_page()
+        self.sidebar_pages.append(self.stack.addWidget(self.dashboard_page))
         
         # Vehicle Log - all users
         self.sidebar_items.append("🚗 Vehicle Log")
-        self.sidebar_pages.append(1)
+        self.vehicle_log_page = self.build_database()
+        self.sidebar_pages.append(self.stack.addWidget(self.vehicle_log_page))
         
         # User Management - Admin and above only
         if self.rbac_controller and self.rbac_controller.can_manage_users():
             self.sidebar_items.append("👥 User Management")
-            self.sidebar_pages.append(2)
+            self.user_management_page = self.build_user_management()
+            self.sidebar_pages.append(self.stack.addWidget(self.user_management_page))
+        
+        # Analytics - all users
+        self.sidebar_items.append("📊 Analytics")
+        self.analytics_page = self.build_analytics_page()
+        self.sidebar_pages.append(self.stack.addWidget(self.analytics_page))
         
         # Search Plate - all users
         self.sidebar_items.append("🔍 Search Plate")
-        self.sidebar_pages.append(3)
+        self.search_plate_page = self.build_search_plate()
+        self.sidebar_pages.append(self.stack.addWidget(self.search_plate_page))
         
         # Settings - all users (view-only for Viewer/Operator)
         if self.rbac_controller and self.rbac_controller.can_view_settings():
             self.sidebar_items.append("⚙ Settings")
-            self.sidebar_pages.append(4)
+            self.settings_page = self.build_settings_page()
+            self.sidebar_pages.append(self.stack.addWidget(self.settings_page))
         
         # Logout - all users
         self.sidebar_items.append("🚪 Logout")
@@ -541,21 +554,6 @@ class PlateDetectorDashboard(QWidget):
             "QListWidget::item { padding: 20px; }"
         )
         self.sidebar.currentRowChanged.connect(self.on_sidebar_changed)
-
-        # Stack (Dashboard + Vehicle Log + User Management + Search Plate + Settings)
-        self.stack = QStackedWidget()
-        
-        self.dashboard_page = self.build_dashboard_page()
-        self.vehicle_log_page = self.build_database()
-        self.user_management_page = self.build_user_management()
-        self.search_plate_page = self.build_search_plate()
-        self.settings_page = self.build_settings_page()
-        
-        self.stack.addWidget(self.dashboard_page)
-        self.stack.addWidget(self.vehicle_log_page)
-        self.stack.addWidget(self.user_management_page)
-        self.stack.addWidget(self.search_plate_page)
-        self.stack.addWidget(self.settings_page)
 
         main_layout.addWidget(self.sidebar)
         main_layout.addWidget(self.stack)
@@ -632,6 +630,47 @@ class PlateDetectorDashboard(QWidget):
             print(f"DEBUG: User Management build error: {e}")
             import traceback
             traceback.print_exc()
+            return page
+
+    def build_analytics_page(self):
+        """Build analytics page"""
+        print("DEBUG: build_analytics_page called")
+        try:
+            print("DEBUG: Importing AnalyticsPage...")
+            from .analytics_page import AnalyticsPage
+            from ..db.database import get_database
+            
+            print("DEBUG: Getting database instance...")
+            db = get_database()
+            print(f"DEBUG: Database instance: {db}")
+            
+            print("DEBUG: Creating AnalyticsPage...")
+            page = AnalyticsPage(db)
+            print("DEBUG: AnalyticsPage created successfully")
+            return page
+        except ImportError as e:
+            # Fallback if analytics page can't be imported
+            print(f"DEBUG: ImportError in analytics page: {e}")
+            import traceback
+            traceback.print_exc()
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"Analytics page unavailable: {e}\n\nInstall required packages:\npip install matplotlib reportlab openpyxl")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setWordWrap(True)
+            layout.addWidget(error_label)
+            return page
+        except Exception as e:
+            # Fallback for any other errors
+            print(f"DEBUG: Exception in analytics page: {e}")
+            import traceback
+            traceback.print_exc()
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"Analytics page error: {e}\n\nCheck console for details")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setWordWrap(True)
+            layout.addWidget(error_label)
             return page
 
     def build_dashboard_page(self):
@@ -1152,7 +1191,7 @@ class PlateDetectorDashboard(QWidget):
         return page
 
     def on_sidebar_changed(self, index):
-        """Handle sidebar navigation with RBAC checks"""
+        """Handle sidebar navigation"""
         print(f"DEBUG: Sidebar changed to index: {index}")
         
         if index < 0 or index >= len(self.sidebar_pages):
@@ -1173,30 +1212,7 @@ class PlateDetectorDashboard(QWidget):
             self.show_login_dialog()
             return
         
-        # Check permissions before navigating
-        if page_index == 2:  # User Management
-            if not self.rbac_controller or not self.rbac_controller.can_manage_users():
-                QMessageBox.warning(
-                    self,
-                    "Access Denied",
-                    "You don't have permission to access User Management.\n\n"
-                    f"Required role: Admin or higher\n"
-                    f"Your role: {self.rbac_controller.get_role_display_name() if self.rbac_controller else 'Guest'}"
-                )
-                self.sidebar.setCurrentRow(0)  # Reset to Dashboard
-                return
-        
-        elif page_index == 4:  # Settings
-            if not self.rbac_controller or not self.rbac_controller.can_view_settings():
-                QMessageBox.warning(
-                    self,
-                    "Access Denied",
-                    "You don't have permission to access Settings."
-                )
-                self.sidebar.setCurrentRow(0)  # Reset to Dashboard
-                return
-        
-        # Navigate to the page
+        # Navigate to the page (permissions already checked during sidebar build)
         self.stack.setCurrentIndex(page_index)
         print(f"DEBUG: Navigated to page index {page_index}")
 
@@ -1311,33 +1327,57 @@ class PlateDetectorDashboard(QWidget):
             # Clear sidebar
             self.sidebar.clear()
             self.sidebar_items = []
+            
+            # Rebuild sidebar items to match stack pages (which are already built)
+            # The stack was built in build_ui() with dynamic indices
+            # We need to rebuild the sidebar items list to match those indices
+            
+            # Count actual pages in stack to determine correct mapping
+            stack_count = self.stack.count()
+            print(f"DEBUG: Stack has {stack_count} pages")
+            
+            # Rebuild sidebar_pages list based on what's actually in the stack
             self.sidebar_pages = []
             
-            # Dashboard - all users
+            # Dashboard - always at index 0
             self.sidebar_items.append("▶ Dashboard")
             self.sidebar_pages.append(0)
             
-            # Vehicle Log - all users
+            # Vehicle Log - always at index 1
             self.sidebar_items.append("🚗 Vehicle Log")
             self.sidebar_pages.append(1)
             
-            # User Management - Admin and above only (when logged in)
+            # User Management - conditionally at index 2
             if is_logged_in and self.rbac_controller and self.rbac_controller.can_manage_users():
                 self.sidebar_items.append("👥 User Management")
                 self.sidebar_pages.append(2)
-                print("DEBUG: User Management added to sidebar")
-            else:
-                if is_logged_in:
-                    print(f"DEBUG: User Management NOT added. can_manage_users: {self.rbac_controller.can_manage_users() if self.rbac_controller else 'N/A'}")
-            
-            # Search Plate - all users
-            self.sidebar_items.append("🔍 Search Plate")
-            self.sidebar_pages.append(3)
-            
-            # Settings - all users (view-only for Viewer/Operator)
-            if self.rbac_controller and self.rbac_controller.can_view_settings():
-                self.sidebar_items.append("⚙ Settings")
+                print("DEBUG: User Management added to sidebar at index 2")
+                
+                # Analytics - at index 3 when User Management exists
+                self.sidebar_items.append("📊 Analytics")
+                self.sidebar_pages.append(3)
+                
+                # Search Plate - at index 4 when User Management exists
+                self.sidebar_items.append("🔍 Search Plate")
                 self.sidebar_pages.append(4)
+                
+                # Settings - at index 5 when User Management exists (if has permission)
+                if self.rbac_controller and self.rbac_controller.can_view_settings():
+                    self.sidebar_items.append("⚙ Settings")
+                    self.sidebar_pages.append(5)
+            else:
+                # Analytics - at index 2 when User Management doesn't exist
+                self.sidebar_items.append("📊 Analytics")
+                self.sidebar_pages.append(2)
+                
+                # Search Plate - at index 3 when User Management doesn't exist
+                self.sidebar_items.append("🔍 Search Plate")
+                self.sidebar_pages.append(3)
+                
+                # Settings - at index 4 when User Management doesn't exist (if has permission)
+                if self.rbac_controller and self.rbac_controller.can_view_settings():
+                    self.sidebar_items.append("⚙ Settings")
+                    self.sidebar_pages.append(4)
             
             # Login/Logout based on login status
             if is_logged_in:
@@ -1357,6 +1397,7 @@ class PlateDetectorDashboard(QWidget):
                 self.sidebar.setCurrentRow(0)
             
             print(f"DEBUG: Sidebar rebuilt with {len(self.sidebar_items)} items")
+            print(f"DEBUG: Sidebar pages mapping: {self.sidebar_pages}")
             
         except Exception as e:
             print(f"DEBUG: Error rebuilding sidebar: {e}")
