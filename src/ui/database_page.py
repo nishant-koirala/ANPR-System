@@ -1010,6 +1010,11 @@ class DatabasePage(QWidget):
             return
             
         try:
+            # Get current user ID BEFORE opening session
+            current_user_id = None
+            if self.rbac_controller:
+                current_user_id = self.rbac_controller.get_current_user_id()
+            
             with self.db.get_session() as session:
                 # Get the vehicle log record
                 vehicle_log = session.query(VehicleLog).filter(VehicleLog.log_id == log_id).first()
@@ -1022,47 +1027,58 @@ class DatabasePage(QWidget):
                 vehicle_log.plate_number = new_plate
                 vehicle_log.is_edited = True
                 vehicle_log.edited_at = datetime.now()
+                vehicle_log.edited_by = current_user_id if current_user_id else 1  # Save user ID to vehicle_log
                 vehicle_log.edit_reason = "Manual edit via database page"
                 
-                # Create audit trail entry with robust error handling
+                # Flush to ensure vehicle_log changes are persisted
+                session.flush()
+                
+                # Commit vehicle_log changes first
                 try:
+                    session.commit()
+                    print(f"Successfully updated vehicle_log for plate '{old_plate}' to '{new_plate}'")
+                except Exception as commit_error:
+                    print(f"Error committing vehicle_log changes: {commit_error}")
+                    import traceback
+                    traceback.print_exc()
+                    session.rollback()
+                    raise
+            
+            # Create audit trail in separate session to avoid conflicts
+            try:
+                with self.db.get_session() as audit_session:
                     from src.db.models import PlateEditHistory
                     
-                    # Create basic edit history record
-                    edit_data = {
-                        'log_id': log_id,
-                        'old_plate_number': old_plate,
-                        'new_plate_number': new_plate,
-                        'edited_by': 1
-                    }
-                    
-                    # Try to add optional fields if they exist in the schema
-                    try:
-                        edit_data['edit_reason'] = "Manual edit via database page"
-                    except:
-                        pass
-                    
-                    edit_history = PlateEditHistory(**edit_data)
-                    session.add(edit_history)
-                    
-                except Exception as audit_error:
-                    print(f"Warning: Could not create audit trail: {audit_error}")
-                    # Continue without audit trail - the main edit will still work
-                
-                session.commit()
-                
-                # Update the table display
-                self.vehicle_table.item(row, 2).setText(new_plate)
-                
-                # Show success message
-                QMessageBox.information(
-                    self, 
-                    "Success", 
-                    f"Plate number updated from '{old_plate}' to '{new_plate}'"
-                )
+                    edit_history = PlateEditHistory(
+                        log_id=log_id,
+                        old_plate_number=old_plate,
+                        new_plate_number=new_plate,
+                        edited_by=current_user_id if current_user_id else 1,
+                        edit_reason="Manual edit via database page"
+                    )
+                    audit_session.add(edit_history)
+                    audit_session.commit()
+                    print("Audit trail created successfully")
+            except Exception as audit_error:
+                print(f"Warning: Could not create audit trail: {audit_error}")
+                import traceback
+                traceback.print_exc()
+                # Continue - the main edit already succeeded
+            
+            # Update the table display (outside session context)
+            self.vehicle_table.item(row, 2).setText(new_plate)
+            
+            # Show success message (outside session context)
+            QMessageBox.information(
+                self, 
+                "Success", 
+                f"Plate number updated from '{old_plate}' to '{new_plate}'"
+            )
                 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to update plate number: {e}")
+            # Convert exception to string immediately to avoid session issues
+            error_msg = str(e)
+            QMessageBox.critical(self, "Error", f"Failed to update plate number: {error_msg}")
             import traceback
             traceback.print_exc()
     

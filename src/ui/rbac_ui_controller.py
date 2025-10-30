@@ -11,9 +11,7 @@ class RBACUIController:
     
     def get_current_user_id(self):
         """Get current user ID safely"""
-        print(f"DEBUG RBACUIController.get_current_user_id: current_username={self.auth_manager.current_username}")
         if not self.auth_manager.current_username:
-            print("DEBUG: No current_username, returning None")
             return None
         try:
             # Get fresh user from database using stored username
@@ -21,15 +19,10 @@ class RBACUIController:
                 from ..db.rbac_models import User
                 user = session.query(User).filter(User.username == self.auth_manager.current_username).first()
                 if user:
-                    print(f"DEBUG: Found user ID: {user.user_id}")
                     return user.user_id
-                else:
-                    print(f"DEBUG: User not found in database for username: {self.auth_manager.current_username}")
             return None
         except Exception as e:
-            print(f"DEBUG: Error getting current user ID: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error getting current user ID: {e}")
             return None
     
     def get_current_roles(self):
@@ -93,8 +86,8 @@ class RBACUIController:
         return self.has_permission(Permissions.EXPORT_DATA)
     
     def can_edit_plates(self) -> bool:
-        """Can edit plate numbers (Admin and above)"""
-        return self.has_permission(Permissions.MANAGE_DATABASE)
+        """Can edit plate numbers (Operator and above)"""
+        return self.has_permission(Permissions.EDIT_PLATE_DATA)
     
     def can_delete_logs(self) -> bool:
         """Can delete vehicle logs (Admin and above)"""
@@ -109,30 +102,38 @@ class RBACUIController:
         return self.has_permission(Permissions.MODIFY_SETTINGS)
     
     def can_view_settings(self) -> bool:
-        """Can view settings"""
+        """Can view settings (Admin and above)"""
         return self.has_permission(Permissions.VIEW_SETTINGS)
     
+    def can_view_analytics(self) -> bool:
+        """Can view analytics (Operator and above)"""
+        return self.has_permission(Permissions.VIEW_ANALYTICS)
+    
     def get_accessible_pages(self):
-        """Get list of pages user can access"""
+        """Get list of pages user can access based on new role structure"""
         pages = []
         
-        # Dashboard - all authenticated users
+        # Dashboard - Operator and above only
         if self.can_view_dashboard():
             pages.append("Dashboard")
         
-        # Vehicle Log - all authenticated users
+        # Vehicle Log - Operator and above only
         if self.can_view_vehicle_logs():
             pages.append("Vehicle Log")
         
-        # User Management - Admin and above
-        if self.can_manage_users():
-            pages.append("User Management")
+        # Analytics - Operator and above only
+        if self.can_view_analytics():
+            pages.append("Analytics")
         
-        # Search Plate - all authenticated users
+        # Search Plate - ALL roles (including Viewer)
         if self.can_view_database():
             pages.append("Search Plate")
         
-        # Settings - View for all, Modify for Admin+
+        # User Management - Admin and above only
+        if self.can_manage_users():
+            pages.append("User Management")
+        
+        # Settings - Admin and above only
         if self.can_view_settings():
             pages.append("Settings")
         
@@ -154,7 +155,7 @@ class RBACUIController:
         elif widget_type == 'edit_button':
             widget.setEnabled(self.can_edit_plates())
             if not self.can_edit_plates():
-                widget.setToolTip("Edit permission required (Admin role or higher)")
+                widget.setToolTip("Edit permission required (Operator role or higher)")
         
         elif widget_type == 'delete_button':
             widget.setEnabled(self.can_delete_logs())

@@ -25,6 +25,8 @@ def initialize_rbac_system(db_session_factory, admin_username: str = "admin", ad
             (Permissions.VIEW_VEHICLE_LOGS, "View vehicle detection logs", "ANPR"),
             (Permissions.DELETE_VEHICLE_LOGS, "Delete vehicle logs", "ANPR"),
             (Permissions.EXPORT_DATA, "Export data to files", "ANPR"),
+            (Permissions.EDIT_PLATE_DATA, "Edit license plate numbers", "ANPR"),
+            (Permissions.VIEW_ANALYTICS, "View analytics and reports", "ANPR"),
             
             # Camera Management
             (Permissions.CONFIG_CAMERAS, "Configure camera settings", "Camera"),
@@ -59,28 +61,29 @@ def initialize_rbac_system(db_session_factory, admin_username: str = "admin", ad
         
         # Create default roles
         default_roles = [
-            (Roles.SUPERADMIN, "Full system access", [
+            (Roles.SUPERADMIN, "Full system access - can do everything", [
                 Permissions.MANAGE_USERS, Permissions.MANAGE_ROLES, Permissions.MANAGE_PERMISSIONS,
                 Permissions.VIEW_AUDIT_LOGS, Permissions.SYSTEM_CONFIG, Permissions.VIEW_DASHBOARD,
                 Permissions.VIEW_VEHICLE_LOGS, Permissions.DELETE_VEHICLE_LOGS, Permissions.EXPORT_DATA,
+                Permissions.EDIT_PLATE_DATA, Permissions.VIEW_ANALYTICS,
                 Permissions.CONFIG_CAMERAS, Permissions.VIEW_CAMERA_STATUS, Permissions.VIEW_DATABASE,
                 Permissions.MANAGE_DATABASE, Permissions.BACKUP_DATABASE, Permissions.MODIFY_SETTINGS,
                 Permissions.VIEW_SETTINGS
             ]),
-            (Roles.ADMIN, "Administrative access", [
-                Permissions.MANAGE_USERS, Permissions.VIEW_AUDIT_LOGS, Permissions.VIEW_DASHBOARD,
-                Permissions.VIEW_VEHICLE_LOGS, Permissions.DELETE_VEHICLE_LOGS, Permissions.EXPORT_DATA,
+            (Roles.ADMIN, "Administrative access - all except create superadmin", [
+                Permissions.MANAGE_USERS, Permissions.MANAGE_ROLES, Permissions.VIEW_AUDIT_LOGS,
+                Permissions.VIEW_DASHBOARD, Permissions.VIEW_VEHICLE_LOGS, Permissions.DELETE_VEHICLE_LOGS,
+                Permissions.EXPORT_DATA, Permissions.EDIT_PLATE_DATA, Permissions.VIEW_ANALYTICS,
                 Permissions.CONFIG_CAMERAS, Permissions.VIEW_CAMERA_STATUS, Permissions.VIEW_DATABASE,
                 Permissions.MANAGE_DATABASE, Permissions.BACKUP_DATABASE, Permissions.MODIFY_SETTINGS, 
                 Permissions.VIEW_SETTINGS
             ]),
-            (Roles.OPERATOR, "Operational access", [
-                Permissions.VIEW_DASHBOARD, Permissions.VIEW_VEHICLE_LOGS, Permissions.EXPORT_DATA,
-                Permissions.VIEW_CAMERA_STATUS, Permissions.VIEW_DATABASE, Permissions.VIEW_SETTINGS
+            (Roles.OPERATOR, "Operational access - dashboard, analytics, edit, export", [
+                Permissions.VIEW_DASHBOARD, Permissions.VIEW_VEHICLE_LOGS, Permissions.VIEW_ANALYTICS,
+                Permissions.EXPORT_DATA, Permissions.EDIT_PLATE_DATA, Permissions.VIEW_DATABASE
             ]),
-            (Roles.VIEWER, "Read-only access", [
-                Permissions.VIEW_DASHBOARD, Permissions.VIEW_VEHICLE_LOGS, Permissions.VIEW_CAMERA_STATUS,
-                Permissions.VIEW_DATABASE, Permissions.VIEW_SETTINGS
+            (Roles.VIEWER, "Search plate only - no edit", [
+                Permissions.VIEW_DATABASE  # Only search functionality
             ])
         ]
         

@@ -397,6 +397,8 @@ class Permissions:
     VIEW_VEHICLE_LOGS = "VIEW_VEHICLE_LOGS"
     DELETE_VEHICLE_LOGS = "DELETE_VEHICLE_LOGS"
     EXPORT_DATA = "EXPORT_DATA"
+    EDIT_PLATE_DATA = "EDIT_PLATE_DATA"  # NEW: Permission to edit plate numbers
+    VIEW_ANALYTICS = "VIEW_ANALYTICS"  # NEW: Permission to view analytics
     
     # Camera Management
     CONFIG_CAMERAS = "CONFIG_CAMERAS"

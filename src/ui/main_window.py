@@ -39,9 +39,7 @@ class PlateDetectorDashboard(QWidget):
         self.setGeometry(100, 100, 1400, 900)
 
         # Initialize auth manager and RBAC controller
-        self.auth_manager = auth_manager  # Use provided auth_manager if available
-        self.rbac_controller = None
-        print(f"DEBUG PlateDetectorDashboard.__init__: auth_manager provided={auth_manager is not None}, username={auth_manager.current_username if auth_manager else 'None'}")
+        self.auth_manager = auth_manager        # Store auth_manager for RBAC integration
         self.initialize_auth()
 
         # Initialize components
@@ -146,13 +144,13 @@ class PlateDetectorDashboard(QWidget):
                 # Get database instance and use its session factory
                 db = get_database()
                 self.auth_manager = AuthManager(db.get_session)
-                print("DEBUG: Created new auth manager")
-            else:
-                print(f"DEBUG: Using provided auth manager (user: {self.auth_manager.current_username})")
             
-            # Always create RBAC controller with the auth manager
-            self.rbac_controller = RBACUIController(self.auth_manager)
-            print("DEBUG: RBAC controller initialized")
+            # Initialize RBAC controller if auth_manager is available
+            if self.auth_manager:
+                from .rbac_ui_controller import RBACUIController
+                self.rbac_controller = RBACUIController(self.auth_manager)
+            else:
+                self.rbac_controller = None
             
             # Rebuild sidebar to reflect current login state
             if hasattr(self, 'sidebar'):
@@ -523,18 +521,33 @@ class PlateDetectorDashboard(QWidget):
         self.stack = QStackedWidget()
         
         # Build sidebar items and add pages to stack dynamically
+        # NEW RBAC STRUCTURE: VIEWER (search only), OPERATOR (dashboard+analytics+edit), ADMIN (all except create superadmin), SUPERADMIN (all)
         self.sidebar_items = []
         self.sidebar_pages = []  # Map sidebar index to stack page index
         
-        # Dashboard - all users
-        self.sidebar_items.append("▶ Dashboard")
-        self.dashboard_page = self.build_dashboard_page()
-        self.sidebar_pages.append(self.stack.addWidget(self.dashboard_page))
+        # Dashboard - Operator and above only
+        if self.rbac_controller and self.rbac_controller.can_view_dashboard():
+            self.sidebar_items.append("▶ Dashboard")
+            self.dashboard_page = self.build_dashboard_page()
+            self.sidebar_pages.append(self.stack.addWidget(self.dashboard_page))
         
-        # Vehicle Log - all users
-        self.sidebar_items.append("🚗 Vehicle Log")
-        self.vehicle_log_page = self.build_database()
-        self.sidebar_pages.append(self.stack.addWidget(self.vehicle_log_page))
+        # Vehicle Log - Operator and above only
+        if self.rbac_controller and self.rbac_controller.can_view_vehicle_logs():
+            self.sidebar_items.append("🚗 Vehicle Log")
+            self.vehicle_log_page = self.build_database()
+            self.sidebar_pages.append(self.stack.addWidget(self.vehicle_log_page))
+        
+        # Analytics - Operator and above only
+        if self.rbac_controller and self.rbac_controller.can_view_analytics():
+            self.sidebar_items.append("📊 Analytics")
+            self.analytics_page = self.build_analytics_page()
+            self.sidebar_pages.append(self.stack.addWidget(self.analytics_page))
+        
+        # Search Plate - ALL roles (including Viewer)
+        if self.rbac_controller and self.rbac_controller.can_view_database():
+            self.sidebar_items.append("🔍 Search Plate")
+            self.search_plate_page = self.build_search_plate()
+            self.sidebar_pages.append(self.stack.addWidget(self.search_plate_page))
         
         # User Management - Admin and above only
         if self.rbac_controller and self.rbac_controller.can_manage_users():
@@ -542,17 +555,7 @@ class PlateDetectorDashboard(QWidget):
             self.user_management_page = self.build_user_management()
             self.sidebar_pages.append(self.stack.addWidget(self.user_management_page))
         
-        # Analytics - all users
-        self.sidebar_items.append("📊 Analytics")
-        self.analytics_page = self.build_analytics_page()
-        self.sidebar_pages.append(self.stack.addWidget(self.analytics_page))
-        
-        # Search Plate - all users
-        self.sidebar_items.append("🔍 Search Plate")
-        self.search_plate_page = self.build_search_plate()
-        self.sidebar_pages.append(self.stack.addWidget(self.search_plate_page))
-        
-        # Settings - all users (view-only for Viewer/Operator)
+        # Settings - Admin and above only
         if self.rbac_controller and self.rbac_controller.can_view_settings():
             self.sidebar_items.append("⚙ Settings")
             self.settings_page = self.build_settings_page()
@@ -718,13 +721,31 @@ class PlateDetectorDashboard(QWidget):
         title = QLabel("⚡ Entry Gate System")
         title.setFont(QFont("Arial", 16, QFont.Bold))
         support = QPushButton("Help & Support")
-        user = QPushButton("Hi, User")
+        
+        # Get user's full name from auth_manager
+        user_display_name = "User"
+        if self.auth_manager and self.auth_manager.current_user:
+            try:
+                # Get fresh user data
+                with self.auth_manager.get_session() as session:
+                    from src.db.rbac_models import User
+                    user_obj = session.query(User).filter(User.username == self.auth_manager.current_username).first()
+                    if user_obj:
+                        user_display_name = user_obj.full_name or user_obj.username
+            except:
+                user_display_name = self.auth_manager.current_username or "User"
+        
+        user_button = QPushButton(f"Hi, {user_display_name}")
         support.setStyleSheet("padding: 6px; background-color: #6ab04c; color: white; border-radius: 5px;")
-        user.setStyleSheet("padding: 6px; background-color: #2980b9; color: white; border-radius: 5px;")
+        user_button.setStyleSheet("padding: 6px; background-color: #2980b9; color: white; border-radius: 5px;")
+        
+        # Connect user button to show profile dialog
+        user_button.clicked.connect(lambda: self.show_user_profile_dialog())
+        
         header_layout.addWidget(title)
         header_layout.addStretch()
         header_layout.addWidget(support)
-        header_layout.addWidget(user)
+        header_layout.addWidget(user_button)
         content_layout.addLayout(header_layout)
 
         # Dynamic Cards with counters - Modern StatsCard
@@ -1403,47 +1424,46 @@ class PlateDetectorDashboard(QWidget):
             print(f"DEBUG: Stack has {stack_count} pages")
             
             # Rebuild sidebar_pages list based on what's actually in the stack
+            # NEW RBAC: VIEWER (search only), OPERATOR (dashboard+analytics), ADMIN (all except create superadmin), SUPERADMIN (all)
             self.sidebar_pages = []
+            page_index = 0
             
-            # Dashboard - always at index 0
-            self.sidebar_items.append("▶ Dashboard")
-            self.sidebar_pages.append(0)
+            # Dashboard - Operator and above only
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_view_dashboard():
+                self.sidebar_items.append("▶ Dashboard")
+                self.sidebar_pages.append(page_index)
+                page_index += 1
             
-            # Vehicle Log - always at index 1
-            self.sidebar_items.append("🚗 Vehicle Log")
-            self.sidebar_pages.append(1)
+            # Vehicle Log - Operator and above only
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_view_vehicle_logs():
+                self.sidebar_items.append("🚗 Vehicle Log")
+                self.sidebar_pages.append(page_index)
+                page_index += 1
             
-            # User Management - conditionally at index 2
+            # Analytics - Operator and above only
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_view_analytics():
+                self.sidebar_items.append("📊 Analytics")
+                self.sidebar_pages.append(page_index)
+                page_index += 1
+            
+            # Search Plate - ALL roles (including Viewer)
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_view_database():
+                self.sidebar_items.append("🔍 Search Plate")
+                self.sidebar_pages.append(page_index)
+                page_index += 1
+            
+            # User Management - Admin and above only
             if is_logged_in and self.rbac_controller and self.rbac_controller.can_manage_users():
                 self.sidebar_items.append("👥 User Management")
-                self.sidebar_pages.append(2)
-                print("DEBUG: User Management added to sidebar at index 2")
-                
-                # Analytics - at index 3 when User Management exists
-                self.sidebar_items.append("📊 Analytics")
-                self.sidebar_pages.append(3)
-                
-                # Search Plate - at index 4 when User Management exists
-                self.sidebar_items.append("🔍 Search Plate")
-                self.sidebar_pages.append(4)
-                
-                # Settings - at index 5 when User Management exists (if has permission)
-                if self.rbac_controller and self.rbac_controller.can_view_settings():
-                    self.sidebar_items.append("⚙ Settings")
-                    self.sidebar_pages.append(5)
-            else:
-                # Analytics - at index 2 when User Management doesn't exist
-                self.sidebar_items.append("📊 Analytics")
-                self.sidebar_pages.append(2)
-                
-                # Search Plate - at index 3 when User Management doesn't exist
-                self.sidebar_items.append("🔍 Search Plate")
-                self.sidebar_pages.append(3)
-                
-                # Settings - at index 4 when User Management doesn't exist (if has permission)
-                if self.rbac_controller and self.rbac_controller.can_view_settings():
-                    self.sidebar_items.append("⚙ Settings")
-                    self.sidebar_pages.append(4)
+                self.sidebar_pages.append(page_index)
+                page_index += 1
+                print(f"DEBUG: User Management added to sidebar at index {page_index-1}")
+            
+            # Settings - Admin and above only
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_view_settings():
+                self.sidebar_items.append("⚙ Settings")
+                self.sidebar_pages.append(page_index)
+                page_index += 1
             
             # Login/Logout based on login status
             if is_logged_in:
@@ -1494,6 +1514,101 @@ class PlateDetectorDashboard(QWidget):
             import traceback
             traceback.print_exc()
 
+    def show_user_profile_dialog(self):
+        """Show user profile dialog with user details"""
+        if not self.auth_manager or not self.auth_manager.current_username:
+            QMessageBox.warning(self, "Not Logged In", "No user is currently logged in.")
+            return
+        
+        try:
+            # Get user details and extract all data within session context
+            with self.auth_manager.get_session() as session:
+                from src.db.rbac_models import User
+                user = session.query(User).filter(User.username == self.auth_manager.current_username).first()
+                
+                if not user:
+                    QMessageBox.warning(self, "Error", "Could not load user information.")
+                    return
+                
+                # Extract all data while in session context
+                user_data = {
+                    'username': user.username,
+                    'full_name': user.full_name or "Not set",
+                    'email': user.email or "Not set",
+                    'status': user.status.value if hasattr(user.status, 'value') else str(user.status),
+                    'last_login': user.last_login.strftime("%Y-%m-%d %H:%M:%S") if user.last_login else "Never",
+                    'created_at': user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else "Unknown",
+                    'user_id': user.user_id
+                }
+            
+            # Get user roles outside of user query session
+            roles = self.auth_manager.get_user_roles(user_data['user_id'])
+            roles_str = ", ".join(roles) if roles else "No roles assigned"
+            
+            # Create dialog
+            from PyQt5.QtWidgets import QDialog, QFormLayout
+            dialog = QDialog(self)
+            dialog.setWindowTitle("User Profile")
+            dialog.setFixedSize(400, 350)
+            
+            layout = QVBoxLayout(dialog)
+            
+            # Title
+            title = QLabel("👤 User Profile")
+            title.setFont(QFont("Arial", 14, QFont.Bold))
+            title.setAlignment(Qt.AlignCenter)
+            layout.addWidget(title)
+            
+            # User details form
+            form_layout = QFormLayout()
+            form_layout.setSpacing(15)
+            
+            # Username
+            username_label = QLabel(user_data['username'])
+            username_label.setStyleSheet("font-weight: bold; color: #2980b9;")
+            form_layout.addRow("Username:", username_label)
+            
+            # Full Name
+            fullname_label = QLabel(user_data['full_name'])
+            fullname_label.setStyleSheet("font-weight: bold;")
+            form_layout.addRow("Full Name:", fullname_label)
+            
+            # Email
+            email_label = QLabel(user_data['email'])
+            form_layout.addRow("Email:", email_label)
+            
+            # Roles
+            roles_label = QLabel(roles_str)
+            roles_label.setStyleSheet("font-weight: bold; color: #27ae60;")
+            form_layout.addRow("Roles:", roles_label)
+            
+            # Status
+            status_label = QLabel(user_data['status'])
+            status_color = "#27ae60" if user_data['status'] == "ACTIVE" else "#e74c3c"
+            status_label.setStyleSheet(f"font-weight: bold; color: {status_color};")
+            form_layout.addRow("Status:", status_label)
+            
+            # Last Login
+            form_layout.addRow("Last Login:", QLabel(user_data['last_login']))
+            
+            # Created At
+            form_layout.addRow("Member Since:", QLabel(user_data['created_at']))
+            
+            layout.addLayout(form_layout)
+            
+            # Close button
+            close_btn = QPushButton("Close")
+            close_btn.setStyleSheet("padding: 8px; background-color: #3498db; color: white; border-radius: 5px;")
+            close_btn.clicked.connect(dialog.accept)
+            layout.addWidget(close_btn)
+            
+            dialog.exec_()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load user profile: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def apply_settings(self):
         """Apply settings changes"""
         QMessageBox.information(self, "Settings", "Settings applied successfully!")
@@ -2347,6 +2462,9 @@ class PlateDetectorDashboard(QWidget):
     
     def detect_cameras(self):
         """Detect available camera devices"""
+        import sys
+        import os
+        
         self.available_cameras = []
         
         print("Scanning for cameras...")
@@ -2360,55 +2478,72 @@ class PlateDetectorDashboard(QWidget):
             'backend': 'HTTP/RTSP'
         })
         
-        # Test camera indices 0-5 for regular cameras
-        for i in range(6):
-            try:
-                camera_found = False
-                camera_info = None
-                
-                backends = [
-                    (cv2.CAP_DSHOW, "DSHOW"),
-                    (-1, "DEFAULT")
-                ]
-                
-                for backend_id, backend_name in backends:
-                    try:
-                        if backend_id == -1:
-                            cap = cv2.VideoCapture(i)
-                        else:
-                            cap = cv2.VideoCapture(i, backend_id)
-                        
-                        if cap.isOpened():
-                            ret, frame = cap.read()
-                            if ret and frame is not None:
-                                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                                fps = int(cap.get(cv2.CAP_PROP_FPS))
-                                
-                                camera_info = {
-                                    'index': i,
-                                    'name': f"Camera {i} (Built-in)" if i == 0 else f"Camera {i}",
-                                    'resolution': f"{width}x{height}",
-                                    'fps': fps,
-                                    'backend': backend_name
-                                }
-                                
-                                camera_found = True
-                                print(f"Found camera {i}: {camera_info['name']} - {width}x{height} @ {fps}fps ({backend_name})")
-                                break
-                        
-                        cap.release()
-                        
-                    except Exception:
-                        if 'cap' in locals():
-                            cap.release()
-                        continue
-                
-                if camera_found and camera_info:
-                    self.available_cameras.append(camera_info)
+        # Suppress OpenCV warnings during camera detection
+        # Save original stderr
+        original_stderr = sys.stderr
+        
+        try:
+            # Redirect stderr to null to suppress OpenCV warnings
+            sys.stderr = open(os.devnull, 'w')
+            
+            # Test camera indices 0-5 for regular cameras
+            for i in range(6):
+                try:
+                    camera_found = False
+                    camera_info = None
                     
-            except Exception:
-                continue
+                    backends = [
+                        (cv2.CAP_DSHOW, "DSHOW"),
+                        (-1, "DEFAULT")
+                    ]
+                    
+                    for backend_id, backend_name in backends:
+                        try:
+                            if backend_id == -1:
+                                cap = cv2.VideoCapture(i)
+                            else:
+                                cap = cv2.VideoCapture(i, backend_id)
+                            
+                            if cap.isOpened():
+                                ret, frame = cap.read()
+                                if ret and frame is not None:
+                                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                                    fps = int(cap.get(cv2.CAP_PROP_FPS))
+                                    
+                                    camera_info = {
+                                        'index': i,
+                                        'name': f"Camera {i} (Built-in)" if i == 0 else f"Camera {i}",
+                                        'resolution': f"{width}x{height}",
+                                        'fps': fps,
+                                        'backend': backend_name
+                                    }
+                                    
+                                    camera_found = True
+                                    break
+                            
+                            cap.release()
+                            
+                        except Exception:
+                            if 'cap' in locals():
+                                cap.release()
+                            continue
+                    
+                    if camera_found and camera_info:
+                        self.available_cameras.append(camera_info)
+                        
+                except Exception:
+                    continue
+        
+        finally:
+            # Restore original stderr
+            sys.stderr.close()
+            sys.stderr = original_stderr
+        
+        # Print results after restoring stderr
+        for cam in self.available_cameras:
+            if cam['index'] != 'ip_camera':
+                print(f"Found camera {cam['index']}: {cam['name']} - {cam['resolution']} @ {cam['fps']}fps ({cam['backend']})")
         
         if len(self.available_cameras) == 1:  # Only IP camera option
             print("No local cameras detected, IP camera option available")

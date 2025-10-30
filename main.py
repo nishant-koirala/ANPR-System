@@ -122,7 +122,6 @@ class ANPRApplication(PlateDetectorDashboard):
             self.db = None
             self.toggle_manager = None
             self.camera_id = None
-            self.simple_auth = None
 
     def process_frame(self, frame_or_path, preview=False):
         """Enqueue frame for processing in the worker (keeps UI responsive)."""
@@ -170,13 +169,14 @@ class ANPRApplication(PlateDetectorDashboard):
                     plate_img = p['plate_img']
                     plate_text = p['text']
                     ocr_confidence = p['confidence']
+                    quality_score = p.get('quality_score')  # Phase 3: Get quality score
 
                     continuous_id = self.vehicle_id_map.get(sort_id, sort_id)
 
                     is_valid = plate_text is not None
                     if DEBUG_OCR_VERBOSE:
-                        print(f"DEBUG: OCR result for vehicle {continuous_id}: text='{plate_text}', confidence={ocr_confidence}")
-                    print(f"DEBUG MAIN: Vehicle {continuous_id} - OCR returned: text='{plate_text}', conf={ocr_confidence}")
+                        quality_str = f", quality={quality_score:.2f}" if quality_score else ""
+                        print(f"Vehicle {continuous_id} - OCR: '{plate_text}' (conf={ocr_confidence:.2f}{quality_str})")
 
                     self.add_plate_to_preview(plate_img, continuous_id, plate_text, ocr_confidence, is_valid)
 
@@ -186,8 +186,10 @@ class ANPRApplication(PlateDetectorDashboard):
                         self.missed_plates_count += 1
 
                     if plate_text is not None:
-                        # Candidate/finalization logic remains unchanged
-                        self.add_plate_candidate(continuous_id, plate_text, ocr_confidence if ocr_confidence is not None else 0.0)
+                        # Phase 3: Pass quality score to candidate tracking
+                        self.add_plate_candidate(continuous_id, plate_text, 
+                                               ocr_confidence if ocr_confidence is not None else 0.0,
+                                               quality_score)
                         final_plate_info = self.get_final_plate_for_vehicle(continuous_id)
 
                         if final_plate_info:
@@ -202,13 +204,10 @@ class ANPRApplication(PlateDetectorDashboard):
                             else:
                                 expected_lengths = {4, 6, 7}  # Allow partial and full plates
 
-                            print(f"DEBUG FINALIZATION: plate='{final_plate_text}', clean='{clean_text}', len={len(clean_text)}, conf={final_confidence}, expected_lens={expected_lengths}")
-                            print(f"DEBUG: Length check: {len(clean_text)} in {expected_lengths} = {len(clean_text) in expected_lengths}")
-                            print(f"DEBUG: Confidence check: {final_confidence} >= {IMMEDIATE_FINALIZATION_THRESHOLD} = {final_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD}")
+                            if DEBUG_OCR_VERBOSE:
+                                print(f"Finalization check: '{final_plate_text}' len={len(clean_text)} conf={final_confidence:.2f}")
                             
                             if len(clean_text) in expected_lengths and final_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD:
-                                print(f"DEBUG: FINALIZATION PASSED - Logging to database: {final_plate_text}")
-                                print(f"DEBUG: About to create plate_info and add to detected_plates")
                                 plate_info = {
                                     'text': final_plate_text,
                                     'confidence': final_confidence,
@@ -226,23 +225,18 @@ class ANPRApplication(PlateDetectorDashboard):
                                 except Exception as e:
                                     print(f"Error adding vehicle to log display: {e}")
                                 
-                                print(f"DEBUG: About to start database logging for {final_plate_text}")
                                 # Log to database with image data
                                 try:
                                     image_data = p.get('image_data', {})
-                                    print(f"DEBUG: Calling log_detection_to_database for {final_plate_text}")
-                                    print(f"DEBUG: image_data keys: {list(image_data.keys()) if image_data else 'None'}")
                                     self.log_detection_to_database(final_plate_text, final_confidence, 
                                                                   f"frame_{self.frame_counter}", 
                                                                   [abs_px1, abs_py1, abs_px2, abs_py2],
                                                                   image_data)
-                                    print(f"DEBUG: Database logging completed for {final_plate_text}")
                                 except Exception as e:
-                                    print(f"DEBUG: Exception in database logging: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                            else:
-                                print(f"DEBUG: FINALIZATION FAILED - len check: {len(clean_text) in expected_lengths}, conf check: {final_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD}")
+                                    print(f"Database logging error: {e}")
+                                    if DEBUG_OCR_VERBOSE:
+                                        import traceback
+                                        traceback.print_exc()
 
                             if (show_img is not None) and (not self.hide_bboxes):
                                 cv2.putText(show_img, f"{final_plate_text} ({final_confidence:.2f})",
@@ -296,20 +290,10 @@ class ANPRApplication(PlateDetectorDashboard):
 
     def log_detection_to_database(self, plate_text, confidence, source, bbox_coords, image_data=None):
         """Log detection to database using toggle manager"""
-        print(f"DEBUG: log_detection_to_database called with plate={plate_text}, conf={confidence}")
-        
-        if not DATABASE_AVAILABLE:
-            print(f"DEBUG: DATABASE_AVAILABLE is False")
-            return
-        if not self.db:
-            print(f"DEBUG: self.db is None")
-            return
-        if not self.toggle_manager:
-            print(f"DEBUG: self.toggle_manager is None")
+        if not DATABASE_AVAILABLE or not self.db or not self.toggle_manager:
             return
             
         try:
-            print(f"DEBUG: Calling add_raw_log for {plate_text}")
             # First, log raw detection with image data
             raw_id = self.db.add_raw_log(
                 camera_id=self.camera_id,
@@ -319,9 +303,7 @@ class ANPRApplication(PlateDetectorDashboard):
                 bbox_coords=bbox_coords,
                 image_data=image_data
             )
-            print(f"DEBUG: add_raw_log returned raw_id={raw_id}")
             
-            print(f"DEBUG: Calling log_vehicle_detection for {plate_text}")
             # Then, process with toggle manager for intelligent entry/exit logging
             log_id = self.toggle_manager.log_vehicle_detection(
                 plate_text=plate_text,
@@ -331,15 +313,15 @@ class ANPRApplication(PlateDetectorDashboard):
                 session_id=f"video_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                 image_data=image_data
             )
-            print(f"DEBUG: log_vehicle_detection returned log_id={log_id}")
             
-            if log_id:
-                print(f"📊 Database logged: {plate_text} (confidence: {confidence:.2f}, log_id: {log_id})")
-            else:
-                print(f"📊 Detection ignored by toggle manager: {plate_text}")
+            if DEBUG_OCR_VERBOSE:
+                if log_id:
+                    print(f"📊 Logged: {plate_text} (conf={confidence:.2f}, log_id={log_id})")
+                else:
+                    print(f"📊 Ignored: {plate_text} (cooldown)")
                 
         except Exception as e:
-            print(f"❌ Database logging error: {e}")
+            print(f"❌ Database error: {e}")
 
     def on_worker_error(self, error_msg):
         """Handle worker errors on the UI thread."""
@@ -368,8 +350,8 @@ class ANPRApplication(PlateDetectorDashboard):
         except Exception:
             pass
     
-    def add_plate_candidate(self, vehicle_id, plate_text, confidence):
-        """Add plate candidate for vehicle"""
+    def add_plate_candidate(self, vehicle_id, plate_text, confidence, quality_score=None):
+        """Add plate candidate for vehicle with optional quality score (Phase 3)"""
         # Check if plate is already owned by another vehicle
         if plate_text in self.plate_ownership:
             existing_owner = self.plate_ownership[plate_text]
@@ -381,19 +363,34 @@ class ANPRApplication(PlateDetectorDashboard):
                 else:
                     return
         
-        # Add to candidates
+        # Add to candidates with quality score
         candidates = self.vehicle_plate_candidates[vehicle_id]
         
         # Update existing or add new candidate
-        for i, (existing_plate, existing_conf, count) in enumerate(candidates):
+        for i, item in enumerate(candidates):
+            # Handle both old format (3-tuple) and new format (4-tuple)
+            if len(item) == 3:
+                existing_plate, existing_conf, count = item
+                existing_quality = None
+            else:
+                existing_plate, existing_conf, count, existing_quality = item
+            
             if existing_plate == plate_text:
                 new_conf = max(existing_conf, confidence)
-                candidates[i] = (plate_text, new_conf, count + 1)
+                # Update quality score if provided and better
+                new_quality = existing_quality
+                if quality_score is not None:
+                    if existing_quality is None or quality_score > existing_quality:
+                        new_quality = quality_score
+                
+                candidates[i] = (plate_text, new_conf, count + 1, new_quality)
                 return
         
-        candidates.append((plate_text, confidence, 1))
-        candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
-        self.vehicle_plate_candidates[vehicle_id] = candidates[:5]
+        # Add new candidate with quality score
+        candidates.append((plate_text, confidence, 1, quality_score))
+        # Sort by confidence first, then quality score, then count
+        candidates.sort(key=lambda x: (x[1], x[3] if x[3] is not None else 0, x[2]), reverse=True)
+        self.vehicle_plate_candidates[vehicle_id] = candidates[:8]  # Increased from 5 to 8
     
     def get_final_plate_for_vehicle(self, vehicle_id):
         """Get final plate assignment for vehicle"""
@@ -408,7 +405,8 @@ class ANPRApplication(PlateDetectorDashboard):
                 # If latest candidate is different and has high confidence, allow re-evaluation
                 if (latest_candidate != current_finalized and 
                     latest_confidence >= IMMEDIATE_FINALIZATION_THRESHOLD):
-                    print(f"DEBUG: Re-evaluating vehicle {vehicle_id}: current='{current_finalized}' vs new='{latest_candidate}' (conf={latest_confidence})")
+                    if DEBUG_OCR_VERBOSE:
+                        print(f"Re-evaluating vehicle {vehicle_id}: '{current_finalized}' → '{latest_candidate}' (conf={latest_confidence:.2f})")
                     # Clear the finalized plate to allow re-evaluation
                     del self.vehicle_final_plates[vehicle_id]
                     if current_finalized in self.plate_ownership:
@@ -422,28 +420,42 @@ class ANPRApplication(PlateDetectorDashboard):
         if not candidates:
             return None
         
-        print(f"DEBUG: get_final_plate_for_vehicle({vehicle_id}) - candidates: {candidates}")
-        
-        # Check for finalization
-        for plate_text, confidence, count in candidates:
-            print(f"DEBUG: Checking candidate: {plate_text}, conf={confidence}, count={count}, min_count={self.min_detections_for_final}, min_conf={self.confidence_threshold_final}")
-            if count >= self.min_detections_for_final and confidence >= self.confidence_threshold_final:
+        # Phase 3: Enhanced consensus with quality-weighted voting
+        for item in candidates:
+            # Handle both old format (3-tuple) and new format (4-tuple)
+            if len(item) == 3:
+                plate_text, confidence, count = item
+                quality_score = None
+            else:
+                plate_text, confidence, count, quality_score = item
+            
+            # Calculate combined score for finalization decision
+            combined_score = confidence
+            if quality_score is not None:
+                # Weight: 70% confidence, 30% quality
+                combined_score = (confidence * 0.7) + (quality_score * 0.3)
+            
+            # Check for finalization with combined score
+            if count >= self.min_detections_for_final and combined_score >= self.confidence_threshold_final:
                 final_info = {
                     'text': plate_text,
                     'confidence': confidence,
+                    'quality_score': quality_score,
+                    'combined_score': combined_score,
                     'detection_count': count,
                     'finalized': True
                 }
                 
                 self.vehicle_final_plates[vehicle_id] = final_info
                 self.plate_ownership[plate_text] = vehicle_id
-                print(f"DEBUG: Finalized by count/confidence: {plate_text}")
+                if DEBUG_OCR_VERBOSE:
+                    quality_str = f", quality={quality_score:.2f}" if quality_score else ""
+                    print(f"Finalized: {plate_text} (count={count}, conf={confidence:.2f}{quality_str}, combined={combined_score:.2f})")
                 return final_info
         
         # Immediate finalization for good detections
         if candidates:
             best_candidate = candidates[0]
-            print(f"DEBUG: Best candidate: {best_candidate[0]}, conf={best_candidate[1]}, threshold={IMMEDIATE_FINALIZATION_THRESHOLD}")
             if best_candidate[1] >= IMMEDIATE_FINALIZATION_THRESHOLD:
                 final_info = {
                     'text': best_candidate[0],
@@ -454,10 +466,10 @@ class ANPRApplication(PlateDetectorDashboard):
                 
                 self.vehicle_final_plates[vehicle_id] = final_info
                 self.plate_ownership[best_candidate[0]] = vehicle_id
-                print(f"DEBUG: Finalized by immediate threshold: {best_candidate[0]}")
+                if DEBUG_OCR_VERBOSE:
+                    print(f"Finalized (immediate): {best_candidate[0]} (conf={best_candidate[1]:.2f})")
                 return final_info
         
-        print(f"DEBUG: No finalization for vehicle {vehicle_id}")
         return None
     
     def remove_plate_from_vehicle(self, vehicle_id, plate_text):

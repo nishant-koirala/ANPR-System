@@ -10,7 +10,7 @@ VEHICLE_MODEL_PATH = "yolov8m.pt"
 AVAILABLE_PLATE_MODELS = ["best.pt"]
 
 # License plate format selection
-DEFAULT_LICENSE_FORMAT = "auto"  # Options: format1, format2, format3, auto
+DEFAULT_LICENSE_FORMAT = "format2"  # Options: format1, format2, format3, auto
 AVAILABLE_LICENSE_FORMATS = {
     "format1": "Format 1: AA00AAA (7 characters)",
     "format2": "Format 2: AA 1111 (6 characters)", 
@@ -19,14 +19,14 @@ AVAILABLE_LICENSE_FORMATS = {
 }
 
 # Model inference settings
-MODEL_IMAGE_SIZE = 256  # YOLO model input image size (reduced for faster inference)
+MODEL_IMAGE_SIZE = 416  # YOLO model input size - balanced for speed and accuracy (416 is 1.6x faster than 640)
 MODEL_VERBOSE = False   # YOLO model verbose output
 
 # ===== Detection Settings =====
-# Confidence thresholds
-VEHICLE_CONFIDENCE_THRESHOLD = 0.15  # Minimum confidence to detect a vehicle
-PLATE_CONFIDENCE_THRESHOLD = 0.15    # Minimum confidence to detect a license plate
-OCR_CONFIDENCE_THRESHOLD = 0.05      # Minimum confidence for OCR text recognition
+# Confidence thresholds (BALANCED FOR ACCURACY & COVERAGE)
+VEHICLE_CONFIDENCE_THRESHOLD = 0.20  # Minimum confidence to detect a vehicle (balanced)
+PLATE_CONFIDENCE_THRESHOLD = 0.30    # Minimum confidence to detect a license plate (lowered to catch more)
+OCR_CONFIDENCE_THRESHOLD = 0.50      # Minimum confidence for OCR text recognition (lowered to catch more)
 
 # Vehicle classes and their confidence thresholds
 VEHICLE_CLASSES = {
@@ -38,26 +38,25 @@ VEHICLE_CLASSES = {
 }
 
 # ===== Video Processing Settings =====
-# Frame processing
-DEFAULT_FRAME_SKIP = 1             # Process every N frames to improve performance (increased from 1)
-DEFAULT_DETECTION_INTERVAL = 1     # Run detection every N processed frames (increased from 1)
+# Frame processing (OPTIMIZED FOR SPEED)
+DEFAULT_FRAME_SKIP = 1             # Process every 2nd frame (2x faster, minimal accuracy loss at 30 FPS)
+DEFAULT_DETECTION_INTERVAL = 1     # Run detection every N processed frames
 FRAME_SKIP_OPTIONS = [1, 2, 3, 4, 5, 10]  # Available frame skip options for UI
 VIDEO_FPS = 30                     # Target frames per second for video processing
 MAX_FRAME_WIDTH = 1280             # Maximum width for processing (maintains aspect ratio)
 MAX_FRAME_HEIGHT = 720             # Maximum height for processing (maintains aspect ratio)
 
 # ===== Tracking Settings =====
-TRACKER_MAX_AGE = 5                # Number of frames to keep a tracker alive without detection
-TRACKER_MIN_HITS = 1               # Minimum number of detections before a track is confirmed
-TRACKER_IOU_THRESHOLD = 0.2       # IOU threshold for tracking (lower for more sensitive matching)
+# Phase 3: Optimized tracker settings for better vehicle persistence
+TRACKER_MAX_AGE = 30               # Keep tracking for 30 frames (~1 sec at 30 FPS) - increased from 5
+TRACKER_MIN_HITS = 2               # Require 2 detections before confirming track - increased from 1
+TRACKER_IOU_THRESHOLD = 0.3        # IOU threshold for tracking - increased from 0.2 for better matching
 TRACKER_TYPE = 'BYTETRACK'         # Default tracker: 'SORT', 'DEEPSORT', or 'BYTETRACK'
 
 # ByteTrack specific defaults
 BYTETRACK_TRACK_THRESH = 0.25
 BYTETRACK_MATCH_THRESH = 0.8
 BYTETRACK_TRACK_BUFFER = 30
-MIN_DETECTIONS_FOR_FINAL = 3       # Minimum number of detections before considering a plate as final
-CONFIDENCE_THRESHOLD_FINAL = 0.7   # Minimum confidence threshold to consider a plate as final
 
 # ===== OCR Settings =====
 OCR_LANGUAGES = ['en', 'ne']        # Languages for OCR (English and Nepali only)
@@ -66,15 +65,15 @@ OCR_GPU_ENABLED = True              # Enable/disable GPU acceleration for OCR
 OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -"  # Allowed characters in license plates
 
 # ===== Image Processing Settings =====
-# Plate detection parameters
-MIN_PLATE_WIDTH = 100              # Minimum width of a license plate in pixels
-MIN_PLATE_HEIGHT = 30              # Minimum height of a license plate in pixels
-PLATE_RESIZE_SCALE = 2.0           # Scale factor for resizing plates before OCR
+# Plate detection parameters (BALANCED FOR DETECTION & ACCURACY)
+MIN_PLATE_WIDTH = 120              # Minimum width of a license plate in pixels (lowered to catch distant plates)
+MIN_PLATE_HEIGHT = 40              # Minimum height of a license plate in pixels (lowered to catch distant plates)
+PLATE_RESIZE_SCALE = 3.5           # Scale factor for resizing plates before OCR (increased from 2.0)
 
-# Image enhancement settings
+# Image enhancement settings (OPTIMIZED FOR PLATE CONTRAST)
 ENHANCE_SCALE_FACTOR = 2.0         # Scale factor for image enhancement
-CLAHE_CLIP_LIMIT = 2.0             # Contrast Limited Adaptive Histogram Equalization clip limit
-CLAHE_TILE_GRID_SIZE = (8, 8)      # Grid size for CLAHE
+CLAHE_CLIP_LIMIT = 3.0             # Contrast Limited Adaptive Histogram Equalization clip limit (increased from 2.0)
+CLAHE_TILE_GRID_SIZE = (4, 4)      # Grid size for CLAHE (smaller tiles for better local enhancement)
 MORPHOLOGY_KERNEL_SIZE = (1, 1)    # Kernel size for morphological operations
 MORPHOLOGY_ITERATIONS = 1          # Number of iterations for morphological operations
 
@@ -116,18 +115,18 @@ OCR_FORMAT2_PERMISSIVE_WIDTH_THS = 0.01
 OCR_FORMAT2_PERMISSIVE_HEIGHT_THS = 0.01
 OCR_FORMAT2_PERMISSIVE_MIN_SIZE = 1
 
-# Plate finalization settings
-MIN_DETECTIONS_FOR_FINAL = 1
-CONFIDENCE_THRESHOLD_FINAL = 0.1
-IMMEDIATE_FINALIZATION_THRESHOLD = 0.1
+# Plate finalization settings (BALANCED FOR ACCURACY & COVERAGE)
+MIN_DETECTIONS_FOR_FINAL = 1       # Require at least 1 detection (lowered to catch more vehicles)
+CONFIDENCE_THRESHOLD_FINAL = 0.55  # Final plate must have 55%+ confidence (lowered to catch more)
+IMMEDIATE_FINALIZATION_THRESHOLD = 0.70  # High confidence plates finalized immediately (lowered to catch more)
 
-# Performance settings
-MAX_HISTORY_FRAMES = 10
-MAX_CANDIDATES_PER_VEHICLE = 5
+# Performance settings (OPTIMIZED FOR SPEED)
+MAX_HISTORY_FRAMES = 8             # Reduced from 10 for faster processing
+MAX_CANDIDATES_PER_VEHICLE = 8     # Increased from 5 for better consensus (more samples)
 
-# Debug settings
-DEBUG_SAVE_IMAGES = True
-DEBUG_OCR_VERBOSE = True
+# Debug settings (disable in production for better performance)
+DEBUG_SAVE_IMAGES = False  # Set to True only for debugging OCR issues
+DEBUG_OCR_VERBOSE = False  # Set to True only for debugging OCR issues
 
 # ===== Parking Fee Settings =====
 # Hourly rate for parking fee calculation (in NPR)

@@ -66,12 +66,23 @@ class SearchThread(QThread):
                 # Convert to list of dictionaries for easier handling
                 search_results = []
                 for log in results:
+                    # Get username from user ID if edited
+                    edited_by_name = 'N/A'
+                    if log.edited_by:
+                        try:
+                            from src.db.rbac_models import User
+                            user = session.query(User).filter(User.user_id == log.edited_by).first()
+                            if user:
+                                edited_by_name = user.full_name or user.username
+                        except:
+                            edited_by_name = f'User ID: {log.edited_by}'
+                    
                     search_results.append({
                         'log_id': log.log_id,
                         'plate_number': log.plate_number,
                         'original_plate_number': log.original_plate_number,
                         'is_edited': log.is_edited or False,
-                        'edited_by': log.edited_by,
+                        'edited_by': edited_by_name,  # Now shows username instead of ID
                         'edited_at': log.edited_at,
                         'edit_reason': log.edit_reason,
                         'toggle_mode': log.toggle_mode.value,
@@ -475,22 +486,16 @@ class SearchPlatePage(QWidget):
         if UI_COMPONENTS_AVAILABLE:
             # Use modern ActionButton with text
             view_btn = ActionButton("View", icon="👁", variant="default", tooltip="View Details")
-            edit_btn = ActionButton("Edit", icon="✏", variant="default", tooltip="Edit Plate")
         else:
             # Fallback to regular buttons with text
             view_btn = QPushButton("👁 View")
             view_btn.setToolTip("View Details")
             view_btn.setStyleSheet("padding: 6px 12px; min-width: 60px; background-color: #3498DB; color: white; border-radius: 4px;")
-            
-            edit_btn = QPushButton("✏ Edit")
-            edit_btn.setToolTip("Edit Plate")
-            edit_btn.setStyleSheet("padding: 6px 12px; min-width: 60px; background-color: #3498DB; color: white; border-radius: 4px;")
         
         view_btn.clicked.connect(lambda: self.view_details(result))
-        edit_btn.clicked.connect(lambda: self.edit_plate(result))
         
         layout.addWidget(view_btn)
-        layout.addWidget(edit_btn)
+        # Edit button removed - editing only available in Vehicle Log page
         layout.addStretch()
         
         return widget
@@ -499,10 +504,8 @@ class SearchPlatePage(QWidget):
         """Handle double click on table cell"""
         if row < len(self.current_results):
             result = self.current_results[row]
-            if column == 1:  # Plate number column
-                self.edit_plate(result)
-            else:
-                self.view_details(result)
+            # Always view details on double-click (edit removed)
+            self.view_details(result)
     
     def _format_duration(self, result):
         """Format duration for display"""
@@ -545,24 +548,8 @@ Edit Reason: {result.get('edit_reason', 'N/A')}
         
         QMessageBox.information(self, f"Details - {result['plate_number']}", details.strip())
     
-    def edit_plate(self, result):
-        """Edit plate number for a result"""
-        from PyQt5.QtWidgets import QInputDialog
-        
-        current_plate = result['plate_number']
-        new_plate, ok = QInputDialog.getText(
-            self, 
-            'Edit Plate Number', 
-            f'Edit plate number for Log ID {result["log_id"]}:',
-            text=current_plate
-        )
-        
-        if ok and new_plate.strip() and new_plate.strip() != current_plate:
-            # Here you would implement the database update logic
-            QMessageBox.information(self, "Edit Plate", 
-                                  f"Plate editing functionality needs to be connected to database.\n"
-                                  f"Would change '{current_plate}' to '{new_plate.strip()}'")
-            # TODO: Implement actual database update
+    # Edit functionality removed from search page
+    # Plate editing is only available in Vehicle Log page with proper permissions
             
     def clear_form(self):
         """Clear search form and results"""

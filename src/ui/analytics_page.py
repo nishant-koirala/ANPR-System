@@ -202,18 +202,12 @@ class AnalyticsPage(QWidget):
     
     def __init__(self, db_manager: Database):
         super().__init__()
-        print("DEBUG: AnalyticsPage.__init__ called")
-        print(f"DEBUG: MATPLOTLIB_AVAILABLE = {MATPLOTLIB_AVAILABLE}")
         self.db_manager = db_manager
         self.exporter = ReportExporter()
         
-        print("DEBUG: Initializing analytics UI...")
         self.init_ui()
-        print("DEBUG: Loading dashboard data...")
         self.load_dashboard()
-        print("DEBUG: Loading forecast data...")
         self.load_forecast()
-        print("DEBUG: AnalyticsPage initialization complete")
     
     def _get_engine(self):
         """Get analytics engine with a new session - must be used in with statement"""
@@ -367,6 +361,15 @@ class AnalyticsPage(QWidget):
         self.patterns_table.setColumnCount(2)
         self.patterns_table.setHorizontalHeaderLabels(["Metric", "Value"])
         self.patterns_table.horizontalHeader().setStretchLastSection(True)
+        
+        # Set minimum and maximum height to make it scrollable
+        self.patterns_table.setMinimumHeight(150)
+        self.patterns_table.setMaximumHeight(250)
+        
+        # Enable vertical scrollbar
+        self.patterns_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.patterns_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
         patterns_layout.addWidget(self.patterns_table)
         patterns_group.setLayout(patterns_layout)
         layout.addWidget(patterns_group)
@@ -624,9 +627,7 @@ class AnalyticsPage(QWidget):
             self.load_revenue()
             
         except Exception as e:
-            print(f"DEBUG: Dashboard load error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Dashboard load error: {e}")
             QMessageBox.warning(self, "Error", f"Failed to load dashboard: {str(e)}")
     
     def load_trends(self):
@@ -698,13 +699,10 @@ class AnalyticsPage(QWidget):
         """Load forecast data"""
         try:
             days = int(self.forecast_days_combo.currentText())
-            print(f"DEBUG: Loading forecast for {days} days")
             
             with self._get_engine() as engine:
                 # Demand forecast
                 demand_forecast = engine.forecast_parking_demand(days)
-                print(f"DEBUG: Demand forecast returned: {demand_forecast}")
-                print(f"DEBUG: Forecast items count: {len(demand_forecast.get('forecast', []))}")
                 
                 self.forecast_table.setRowCount(0)
                 
@@ -722,11 +720,9 @@ class AnalyticsPage(QWidget):
                         self.forecast_table.setItem(row, 0, QTableWidgetItem(item['date']))
                         self.forecast_table.setItem(row, 1, QTableWidgetItem(str(item['predicted_entries'])))
                         self.forecast_table.setItem(row, 2, QTableWidgetItem(item['confidence'].capitalize()))
-                        print(f"DEBUG: Added forecast row: {item['date']} - {item['predicted_entries']}")
                 
                 # Revenue forecast
                 revenue_forecast = engine.forecast_revenue(days)
-                print(f"DEBUG: Revenue forecast returned: {revenue_forecast}")
                 
                 self.revenue_forecast_table.setRowCount(0)
                 
@@ -744,10 +740,6 @@ class AnalyticsPage(QWidget):
                         self.revenue_forecast_table.setItem(row, 0, QTableWidgetItem(item['date']))
                         self.revenue_forecast_table.setItem(row, 1, QTableWidgetItem(f"{item['predicted_revenue']:.2f}"))
                         self.revenue_forecast_table.setItem(row, 2, QTableWidgetItem(item['confidence'].capitalize()))
-            
-            print(f"DEBUG: Forecast loaded successfully - {days} days")
-            # Don't show message box on auto-load
-            # QMessageBox.information(self, "Success", f"Forecast generated for next {days} days")
         
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to generate forecast: {str(e)}")
@@ -785,9 +777,7 @@ class AnalyticsPage(QWidget):
             QMessageBox.warning(self, "Missing Dependency", 
                               "PDF export requires reportlab.\nInstall with: pip install reportlab")
         except Exception as e:
-            print(f"DEBUG: PDF export error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"PDF export error: {e}")
             QMessageBox.warning(self, "Error", f"Failed to export PDF: {str(e)}")
     
     def export_excel(self):

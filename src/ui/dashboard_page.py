@@ -6,15 +6,16 @@ from collections import defaultdict
 
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QListWidget, QTableWidget,
-    QTableWidgetItem, QScrollArea, QSlider, QComboBox, QCheckBox, QApplication
+    QTableWidgetItem, QScrollArea, QSlider, QComboBox, QCheckBox, QApplication, QDialog, QFormLayout, QMessageBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QFont
 from PyQt5.QtCore import Qt, QTimer
 
 class DashboardPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, auth_manager=None):
         super().__init__(parent)
         self.parent = parent
+        self.auth_manager = auth_manager
         self.build_ui()
 
     def build_ui(self):
@@ -26,13 +27,31 @@ class DashboardPage(QWidget):
         title = QLabel("⚡ Entry Gate System")
         title.setFont(QFont("Arial", 16, QFont.Bold))
         support = QPushButton("Help & Support")
-        user = QPushButton("Hi, User")
+        
+        # Get user's full name from auth_manager
+        user_display_name = "User"
+        if self.auth_manager and self.auth_manager.current_user:
+            try:
+                # Get fresh user data
+                with self.auth_manager.get_session() as session:
+                    from src.db.rbac_models import User
+                    user_obj = session.query(User).filter(User.username == self.auth_manager.current_username).first()
+                    if user_obj:
+                        user_display_name = user_obj.full_name or user_obj.username
+            except:
+                user_display_name = self.auth_manager.current_username or "User"
+        
+        self.user_button = QPushButton(f"Hi, {user_display_name}")
         support.setStyleSheet("padding: 6px; background-color: #6ab04c; color: white; border-radius: 5px;")
-        user.setStyleSheet("padding: 6px; background-color: #2980b9; color: white; border-radius: 5px;")
+        self.user_button.setStyleSheet("padding: 6px; background-color: #2980b9; color: white; border-radius: 5px;")
+        
+        # Connect user button to show profile dialog
+        self.user_button.clicked.connect(self.show_user_profile)
+        
         header_layout.addWidget(title)
         header_layout.addStretch()
         header_layout.addWidget(support)
-        header_layout.addWidget(user)
+        header_layout.addWidget(self.user_button)
         content_layout.addLayout(header_layout)
 
         # Dynamic Cards with counters
@@ -226,6 +245,89 @@ class DashboardPage(QWidget):
         # Implemented in main_window.py
         pass
 
+    def show_user_profile(self):
+        """Show user profile dialog with user details"""
+        if not self.auth_manager or not self.auth_manager.current_username:
+            QMessageBox.warning(self, "Not Logged In", "No user is currently logged in.")
+            return
+        
+        try:
+            # Get user details
+            with self.auth_manager.get_session() as session:
+                from src.db.rbac_models import User
+                user = session.query(User).filter(User.username == self.auth_manager.current_username).first()
+                
+                if not user:
+                    QMessageBox.warning(self, "Error", "Could not load user information.")
+                    return
+                
+                # Get user roles
+                roles = self.auth_manager.get_user_roles(user.user_id)
+                roles_str = ", ".join(roles) if roles else "No roles assigned"
+                
+                # Create dialog
+                dialog = QDialog(self)
+                dialog.setWindowTitle("User Profile")
+                dialog.setFixedSize(400, 300)
+                
+                layout = QVBoxLayout(dialog)
+                
+                # Title
+                title = QLabel("👤 User Profile")
+                title.setFont(QFont("Arial", 14, QFont.Bold))
+                title.setAlignment(Qt.AlignCenter)
+                layout.addWidget(title)
+                
+                # User details form
+                form_layout = QFormLayout()
+                form_layout.setSpacing(15)
+                
+                # Username
+                username_label = QLabel(user.username)
+                username_label.setStyleSheet("font-weight: bold; color: #2980b9;")
+                form_layout.addRow("Username:", username_label)
+                
+                # Full Name
+                fullname_label = QLabel(user.full_name or "Not set")
+                fullname_label.setStyleSheet("font-weight: bold;")
+                form_layout.addRow("Full Name:", fullname_label)
+                
+                # Email
+                email_label = QLabel(user.email or "Not set")
+                form_layout.addRow("Email:", email_label)
+                
+                # Roles
+                roles_label = QLabel(roles_str)
+                roles_label.setStyleSheet("font-weight: bold; color: #27ae60;")
+                form_layout.addRow("Roles:", roles_label)
+                
+                # Status
+                status_label = QLabel(user.status.value if hasattr(user.status, 'value') else str(user.status))
+                status_color = "#27ae60" if str(user.status) == "ACTIVE" else "#e74c3c"
+                status_label.setStyleSheet(f"font-weight: bold; color: {status_color};")
+                form_layout.addRow("Status:", status_label)
+                
+                # Last Login
+                last_login = user.last_login.strftime("%Y-%m-%d %H:%M:%S") if user.last_login else "Never"
+                form_layout.addRow("Last Login:", QLabel(last_login))
+                
+                # Created At
+                created_at = user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else "Unknown"
+                form_layout.addRow("Member Since:", QLabel(created_at))
+                
+                layout.addLayout(form_layout)
+                
+                # Close button
+                close_btn = QPushButton("Close")
+                close_btn.setStyleSheet("padding: 8px; background-color: #3498db; color: white; border-radius: 5px;")
+                close_btn.clicked.connect(dialog.accept)
+                layout.addWidget(close_btn)
+                
+                dialog.exec_()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load user profile: {e}")
+    
     def load_video(self):
         """Load a video file"""
         # Implemented in main_window.py

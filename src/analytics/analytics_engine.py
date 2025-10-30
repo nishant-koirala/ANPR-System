@@ -430,12 +430,19 @@ class AnalyticsEngine:
             )
         ).scalar() or 0
         
+        # Calculate occupancy (prevent negative values)
+        occupancy = entries - exits
+        # If negative, it means data inconsistency (more exits than entries)
+        # This can happen if database was reset or system started mid-operation
+        if occupancy < 0:
+            occupancy = 0
+        
         return {
             'period': period,
             'start_date': start_date,
             'end_date': end_date,
             'total_entries': entries,
             'total_exits': exits,
-            'current_occupancy': entries - exits,
+            'current_occupancy': occupancy,
             'total_revenue': round(revenue, 2)
         }

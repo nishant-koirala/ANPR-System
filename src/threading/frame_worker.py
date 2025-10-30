@@ -16,6 +16,8 @@ from src.detection.vehicle_detector import VehicleDetector
 from src.detection.plate_detector import PlateDetector
 from src.ocr.plate_reader import PlateReader
 from src.utils.image_processor import PlateImageProcessor
+from src.utils.image_processing import expand_plate_roi
+from src.utils.advanced_processing import calculate_plate_quality_score
 
 
 class FrameWorker(QObject):
@@ -437,6 +439,13 @@ class FrameWorker(QObject):
                                 abs_py1 = int(y1 + py1)
                                 abs_px2 = int(x1 + px2)
                                 abs_py2 = int(y1 + py2)
+                                
+                                # Expand ROI to avoid cutting off characters (15% expansion)
+                                img_h, img_w = original_img.shape[:2]
+                                abs_px1, abs_py1, abs_px2, abs_py2 = expand_plate_roi(
+                                    abs_px1, abs_py1, abs_px2, abs_py2, img_w, img_h, expand_ratio=0.15
+                                )
+                                
                                 plate_img = original_img[abs_py1:abs_py2, abs_px1:abs_px2]
                                 if plate_img is None or plate_img.size == 0:
                                     continue
@@ -478,6 +487,13 @@ class FrameWorker(QObject):
                             abs_py1 = int(y1 + py1)
                             abs_px2 = int(x1 + px2)
                             abs_py2 = int(y1 + py2)
+                            
+                            # Expand ROI to avoid cutting off characters (15% expansion)
+                            img_h, img_w = original_img.shape[:2]
+                            abs_px1, abs_py1, abs_px2, abs_py2 = expand_plate_roi(
+                                abs_px1, abs_py1, abs_px2, abs_py2, img_w, img_h, expand_ratio=0.15
+                            )
+                            
                             plate_img = original_img[abs_py1:abs_py2, abs_px1:abs_px2]
                             if plate_img is None or plate_img.size == 0:
                                 continue
@@ -521,6 +537,11 @@ class FrameWorker(QObject):
 
                 text, conf = self.plate_reader.extract_plate_text(plate_img, license_format)
                 
+                # Phase 3: Calculate quality score for temporal tracking
+                quality_score = None
+                if text and conf is not None:
+                    quality_score = calculate_plate_quality_score(plate_img, conf)
+                
                 # Save plate image if text was detected
                 image_data = {}
                 if text and len(text.strip()) > 0:
@@ -555,6 +576,7 @@ class FrameWorker(QObject):
                         'plate_img': plate_img,
                         'text': text,
                         'confidence': float(conf) if conf is not None else None,
+                        'quality_score': float(quality_score) if quality_score is not None else None,
                         'image_data': image_data,
                     }],
                     'preview': False,

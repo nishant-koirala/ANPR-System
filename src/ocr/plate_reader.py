@@ -8,8 +8,9 @@ from config.settings import (OCR_LANGUAGES, OCR_GPU_ENABLED, OCR_CONFIDENCE_THRE
                              OCR_FORMAT2_STANDARD_WIDTH_THS, OCR_FORMAT2_STANDARD_HEIGHT_THS, OCR_FORMAT2_STANDARD_MIN_SIZE,
                              OCR_FORMAT2_PERMISSIVE_WIDTH_THS, OCR_FORMAT2_PERMISSIVE_HEIGHT_THS, OCR_FORMAT2_PERMISSIVE_MIN_SIZE,
                              DEFAULT_LICENSE_FORMAT)
-from src.utils.image_processing import resize_plate_for_ocr, preprocess_for_ocr
+from src.utils.image_processing import resize_plate_for_ocr, preprocess_for_ocr, is_plate_quality_sufficient
 from src.utils.text_processing import flatten_text, validate_license_format, format_license_plate
+from src.utils.advanced_processing import correct_plate_perspective, calculate_plate_quality_score
 
 class PlateReader:
     def __init__(self):
@@ -29,6 +30,13 @@ class PlateReader:
             
             if DEBUG_OCR_VERBOSE:
                 print(f"DEBUG: Processing image of size {image.shape}")
+            
+            # Quality check before processing
+            is_quality_ok, quality_reason = is_plate_quality_sufficient(image)
+            if not is_quality_ok:
+                if DEBUG_OCR_VERBOSE:
+                    print(f"DEBUG: Plate quality insufficient: {quality_reason}")
+                return None, None
 
             # Use default format from settings if not specified
             if license_format is None:
@@ -48,6 +56,9 @@ class PlateReader:
             processed_img, was_resized, old_size, new_size = resize_plate_for_ocr(image)
             if was_resized and DEBUG_OCR_VERBOSE:
                 print(f"DEBUG: Resized plate from {old_size[0]}x{old_size[1]} to {new_size[0]}x{new_size[1]}")
+            
+            # Apply perspective correction for better OCR
+            processed_img = correct_plate_perspective(processed_img)
             
             # Save debug images if enabled
             if DEBUG_SAVE_IMAGES:
@@ -110,18 +121,25 @@ class PlateReader:
                         {'img': thresh, 'params': {'width_ths': OCR_FORMAT1_STANDARD_WIDTH_THS, 'height_ths': OCR_FORMAT1_STANDARD_HEIGHT_THS, 'min_size': OCR_FORMAT1_STANDARD_MIN_SIZE}, 'name': 'Format1 thresh'}
                     ]
                 
-                # Try each strategy until we get detections
+                # PHASE 3: Try ALL strategies and collect results (not just first success)
+                all_strategy_results = []
                 for strategy in strategies:
                     try:
-                        detections = self.ocr_reader.readtext(strategy['img'], **strategy['params'])
+                        strategy_detections = self.ocr_reader.readtext(strategy['img'], **strategy['params'])
                         if DEBUG_OCR_VERBOSE:
-                            print(f"DEBUG: {strategy['name']} found {len(detections)} detections")
-                        if len(detections) > 0:
-                            break
+                            print(f"DEBUG: {strategy['name']} found {len(strategy_detections)} detections")
+                        if len(strategy_detections) > 0:
+                            all_strategy_results.append((strategy['name'], strategy_detections))
                     except Exception as e:
                         if DEBUG_OCR_VERBOSE:
                             print(f"DEBUG: {strategy['name']} failed: {e}")
                         continue
+                
+                # Use detections from best strategy (or first if only one)
+                if all_strategy_results:
+                    # For now, use first successful strategy's detections
+                    # Later we'll implement voting across all strategies
+                    detections = all_strategy_results[0][1]
                         
             except Exception as e:
                 if DEBUG_OCR_VERBOSE:
@@ -156,18 +174,50 @@ class PlateReader:
                 # Clean and normalize text
                 text = str(text).upper().strip()
                 
-                # Clean OCR artifacts and special characters
+                # Enhanced OCR artifact cleaning
                 import re
-                # Remove common OCR artifacts and keep only alphanumeric and spaces
+                
+                # Step 1: Common character substitutions (OCR mistakes)
+                char_substitutions = {
+                    '|': 'I', '!': 'I', '1': 'I',  # Vertical lines to I
+                    '/': '7', '\\': '7',           # Slashes to 7
+                    'Q': 'O', '@': 'O',            # Similar to O
+                    'B': '8', '&': '8',            # Similar to 8
+                    'Z': '2',                       # Similar to 2
+                    'S': '5',                       # Similar to 5
+                    'G': '6',                       # Similar to 6
+                }
+                
+                # Apply substitutions for likely positions
+                # (This is conservative - only obvious mistakes)
+                for old_char, new_char in char_substitutions.items():
+                    if old_char in text:
+                        text = text.replace(old_char, new_char)
+                
+                # Step 2: Remove special characters and artifacts
                 cleaned_text = re.sub(r'[^A-Z0-9\s]', '', text)
-                # Normalize multiple spaces to single space
+                
+                # Step 3: Normalize multiple spaces
                 cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+                
+                # Step 4: Remove isolated single characters that are likely noise
+                words = cleaned_text.split()
+                if len(words) > 2:
+                    # Keep only words with 2+ chars or if it's the only word
+                    words = [w for w in words if len(w) >= 2 or len(words) == 1]
+                    cleaned_text = ' '.join(words)
                 
                 if DEBUG_OCR_VERBOSE:
                     print(f"DEBUG: Cleaned text: '{text}' -> '{cleaned_text}'")
                 
                 # Use cleaned text for processing
                 text = cleaned_text
+                
+                # Skip if cleaned text is too short
+                if len(text.replace(' ', '')) < 4:
+                    if DEBUG_OCR_VERBOSE:
+                        print(f"DEBUG: Text too short after cleaning: '{text}'")
+                    continue
                 
                 # Handle text variations based on format
                 if license_format in ['format2', 'format3']:

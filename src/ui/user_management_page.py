@@ -23,7 +23,6 @@ class CreateUserDialog(QDialog):
     
     def __init__(self, auth_manager, parent=None):
         super().__init__(parent)
-        print(f"DEBUG: CreateUserDialog.__init__ called with auth_manager: {auth_manager}")
         self.auth_manager = auth_manager
         self.init_ui()
         
@@ -55,17 +54,34 @@ class CreateUserDialog(QDialog):
         form_layout.addRow("Full Name:", self.fullname_edit)
         
         # Role selection (single role only)
+        # NEW RBAC: ADMIN cannot create SUPERADMIN
         roles_group = QGroupBox("Assign Role (Select One)")
         roles_layout = QVBoxLayout()
         
         self.role_button_group = QButtonGroup()
         self.role_buttons = {}
         
-        for i, role in enumerate([Roles.VIEWER, Roles.OPERATOR, Roles.ADMIN, Roles.SUPERADMIN]):
+        # Check if current user is SUPERADMIN
+        from ..ui.rbac_ui_controller import RBACUIController
+        rbac = RBACUIController(self.auth_manager)
+        is_superadmin = rbac.is_superadmin()
+        
+        # Show all roles for SUPERADMIN, exclude SUPERADMIN for ADMIN
+        available_roles = [Roles.VIEWER, Roles.OPERATOR, Roles.ADMIN]
+        if is_superadmin:
+            available_roles.append(Roles.SUPERADMIN)
+        
+        for i, role in enumerate(available_roles):
             radio_button = QRadioButton(role)
             self.role_buttons[role] = radio_button
             self.role_button_group.addButton(radio_button, i)
             roles_layout.addWidget(radio_button)
+        
+        # Add note for ADMIN users
+        if not is_superadmin:
+            note_label = QLabel("Note: Only SUPERADMIN can create SUPERADMIN users")
+            note_label.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
+            roles_layout.addWidget(note_label)
         
         # Set VIEWER as default
         self.role_buttons[Roles.VIEWER].setChecked(True)
@@ -93,14 +109,10 @@ class CreateUserDialog(QDialog):
         
     def create_user(self):
         try:
-            print("DEBUG: Starting user creation process...")
-            
             username = self.username_edit.text().strip()
             password = self.password_edit.text()
             email = self.email_edit.text().strip()
             fullname = self.fullname_edit.text().strip()
-            
-            print(f"DEBUG: Form data - Username: '{username}', Email: '{email}', Full name: '{fullname}'")
             
             # Validate required fields
             if not username:
@@ -130,14 +142,12 @@ class CreateUserDialog(QDialog):
                 return
             
             selected_roles = [selected_role]
-            print(f"DEBUG: Selected role: {selected_role}")
             
             # Check if auth_manager is available
             if not self.auth_manager:
                 QMessageBox.critical(self, "Error", "Authentication manager not available")
                 return
             
-            print("DEBUG: Calling auth_manager.create_user...")
             user_id = self.auth_manager.create_user(
                 username=username,
                 password=password,
@@ -146,18 +156,13 @@ class CreateUserDialog(QDialog):
                 roles=selected_roles
             )
             
-            print(f"DEBUG: User created successfully with ID: {user_id}")
             QMessageBox.information(self, "Success", 
                                   f"User '{username}' created successfully (ID: {user_id})")
             self.accept()
             
         except ValueError as ve:
-            print(f"DEBUG: ValueError occurred: {str(ve)}")
             QMessageBox.critical(self, "Validation Error", str(ve))
         except Exception as e:
-            print(f"DEBUG: Exception occurred: {type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to create user: {str(e)}\n\nType: {type(e).__name__}")
 
 class UserManagementPage(QWidget):
