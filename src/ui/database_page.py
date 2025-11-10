@@ -1015,12 +1015,18 @@ class DatabasePage(QWidget):
             if self.rbac_controller:
                 current_user_id = self.rbac_controller.get_current_user_id()
             
+            # Store raw_ref before session closes
+            raw_ref = None
+            
             with self.db.get_session() as session:
                 # Get the vehicle log record
                 vehicle_log = session.query(VehicleLog).filter(VehicleLog.log_id == log_id).first()
                 if not vehicle_log:
                     QMessageBox.warning(self, "Warning", "Vehicle log not found")
                     return
+                
+                # Store raw_ref before session closes
+                raw_ref = vehicle_log.raw_ref
                 
                 # Update the plate number
                 vehicle_log.original_plate_number = old_plate if not vehicle_log.original_plate_number else vehicle_log.original_plate_number
@@ -1043,6 +1049,9 @@ class DatabasePage(QWidget):
                     traceback.print_exc()
                     session.rollback()
                     raise
+            
+            # Re-run entry/exit logic and stolen vehicle check after edit
+            self.reprocess_after_edit(log_id, new_plate, raw_ref)
             
             # Create audit trail in separate session to avoid conflicts
             try:
@@ -1079,6 +1088,171 @@ class DatabasePage(QWidget):
             # Convert exception to string immediately to avoid session issues
             error_msg = str(e)
             QMessageBox.critical(self, "Error", f"Failed to update plate number: {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
+    def reprocess_after_edit(self, log_id, new_plate, raw_ref):
+        """
+        Re-run entry/exit logic and stolen vehicle check after plate edit
+        
+        Args:
+            log_id: The log ID that was edited
+            new_plate: The new plate number
+            raw_ref: Raw log reference ID
+        """
+        try:
+            print(f"\n🔄 Reprocessing after edit: {new_plate}")
+            
+            # 1. Check for entry/exit logic
+            self.check_entry_exit_after_edit(log_id, new_plate)
+            
+            # 2. Check if stolen vehicle
+            self.check_stolen_after_edit(new_plate, raw_ref)
+            
+        except Exception as e:
+            print(f"Error reprocessing after edit: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def check_entry_exit_after_edit(self, current_log_id, new_plate):
+        """
+        Check if edited plate should be marked as EXIT based on previous ENTRY
+        
+        Args:
+            current_log_id: The log ID that was just edited
+            new_plate: The new plate number
+        """
+        try:
+            if not self.db:
+                return
+            
+            with self.db.get_session() as session:
+                # Get the current record
+                current_log = session.query(VehicleLog).filter(
+                    VehicleLog.log_id == current_log_id
+                ).first()
+                
+                if not current_log:
+                    return
+                
+                # If already marked as EXIT, skip
+                if current_log.toggle_mode == ToggleMode.EXIT:
+                    print(f"  ℹ️ Already marked as EXIT")
+                    return
+                
+                # Look for previous ENTRY with same plate
+                from sqlalchemy import and_
+                previous_entry = session.query(VehicleLog).filter(
+                    and_(
+                        VehicleLog.plate_number == new_plate,
+                        VehicleLog.toggle_mode == ToggleMode.ENTRY,
+                        VehicleLog.log_id < current_log_id,
+                        VehicleLog.captured_at < current_log.captured_at
+                    )
+                ).order_by(VehicleLog.captured_at.desc()).first()
+                
+                if previous_entry:
+                    # Found matching ENTRY - mark current as EXIT
+                    print(f"  ✅ Found previous ENTRY (log_id: {previous_entry.log_id})")
+                    print(f"  🔄 Marking current record as EXIT")
+                    
+                    # Calculate duration
+                    duration = current_log.captured_at - previous_entry.captured_at
+                    duration_minutes = int(duration.total_seconds() / 60)
+                    duration_hours = round(duration_minutes / 60.0, 2)
+                    
+                    # Calculate amount
+                    from config.settings import PARKING_HOURLY_RATE, MINIMUM_CHARGE_HOURS
+                    charge_hours = max(duration_hours, MINIMUM_CHARGE_HOURS)
+                    amount = round(charge_hours * PARKING_HOURLY_RATE, 2)
+                    
+                    # Update current record
+                    current_log.toggle_mode = ToggleMode.EXIT
+                    current_log.duration_minutes = duration_minutes
+                    current_log.duration_hours = duration_hours
+                    current_log.amount = amount
+                    
+                    session.commit()
+                    
+                    print(f"  ✅ Marked as EXIT - Duration: {duration_hours}h, Amount: NPR {amount}")
+                    
+                    # Show notification
+                    QMessageBox.information(
+                        self,
+                        "Exit Detected",
+                        f"Plate '{new_plate}' matched previous entry!\n\n"
+                        f"Duration: {duration_hours} hours\n"
+                        f"Amount: NPR {amount}\n\n"
+                        f"Record marked as EXIT."
+                    )
+                else:
+                    print(f"  ℹ️ No previous ENTRY found for {new_plate}")
+                    
+        except Exception as e:
+            print(f"Error checking entry/exit: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def check_stolen_after_edit(self, new_plate, raw_ref):
+        """
+        Check if edited plate is a stolen vehicle
+        
+        Args:
+            new_plate: The new plate number
+            raw_ref: Raw log reference ID
+        """
+        try:
+            # Import here to avoid circular dependency
+            from src.db.special_vehicles_db import SpecialVehiclesDB
+            
+            if not self.db:
+                return
+            
+            # Initialize special vehicles DB
+            special_db = SpecialVehiclesDB(self.db.get_session)
+            
+            print(f"  🔍 Checking if {new_plate} is stolen...")
+            
+            # Check if stolen
+            stolen_vehicle = special_db.check_if_stolen(new_plate)
+            
+            if stolen_vehicle:
+                print(f"  🚨 STOLEN VEHICLE DETECTED: {new_plate}")
+                
+                # Check cooldown
+                config = special_db.get_alert_config()
+                cooldown_minutes = config.alert_cooldown_minutes if config else 5
+                
+                if special_db.check_alert_cooldown(stolen_vehicle.id, cooldown_minutes):
+                    # Log alert
+                    alert = special_db.log_stolen_vehicle_alert(
+                        stolen_vehicle_id=stolen_vehicle.id,
+                        raw_log_id=raw_ref,
+                        alert_sent_dashboard=True
+                    )
+                    
+                    if alert:
+                        # Show critical alert
+                        msg = QMessageBox(self)
+                        msg.setIcon(QMessageBox.Critical)
+                        msg.setWindowTitle("🚨 STOLEN VEHICLE DETECTED!")
+                        msg.setText(f"<h2 style='color: #e74c3c;'>⚠️ STOLEN VEHICLE ALERT</h2>")
+                        msg.setInformativeText(
+                            f"<b>Plate Number:</b> {new_plate}<br>"
+                            f"<b>Owner:</b> {stolen_vehicle.owner_name or 'Unknown'}<br>"
+                            f"<b>Vehicle Type:</b> {stolen_vehicle.vehicle_type or 'Unknown'}<br>"
+                            f"<b>Reported Date:</b> {stolen_vehicle.reported_date.strftime('%Y-%m-%d') if stolen_vehicle.reported_date else 'Unknown'}<br><br>"
+                            f"<span style='color: #e74c3c;'><b>⚠️ This plate was detected after manual edit!</b></span>"
+                        )
+                        msg.setStandardButtons(QMessageBox.Ok)
+                        msg.exec_()
+                else:
+                    print(f"  ⏳ Alert in cooldown period")
+            else:
+                print(f"  ✅ Not a stolen vehicle")
+                
+        except Exception as e:
+            print(f"Error checking stolen vehicle: {e}")
             import traceback
             traceback.print_exc()
     

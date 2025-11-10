@@ -59,6 +59,25 @@ BYTETRACK_MATCH_THRESH = 0.8
 BYTETRACK_TRACK_BUFFER = 30
 
 # ===== OCR Settings =====
+# Recognition method selection
+RECOGNITION_METHOD = "two_stage"  # Options: "easyocr", "two_stage"
+AVAILABLE_RECOGNITION_METHODS = {
+    "easyocr": "EasyOCR (Default OCR Pipeline)",
+    "two_stage": "Two-Stage Pipeline (YOLO + CNN Character Recognition)"
+}
+
+# Two-Stage Pipeline Settings (YOLO + CNN)
+TWO_STAGE_YOLO_MODEL = "modelcheck/best.pt"  # YOLO model for character segmentation
+TWO_STAGE_CNN_MODEL = "modelcheck/model.pth"  # CNN model for character classification
+TWO_STAGE_LABELS_FILE = "modelcheck/labels.json"  # Character class labels
+TWO_STAGE_CONF_THRESHOLD = 0.25  # Confidence threshold for YOLO character detection (lower = more detections)
+TWO_STAGE_ROW_TOLERANCE = 30  # Pixel tolerance for grouping characters into rows (higher = more flexible)
+TWO_STAGE_MIN_CHARS = 3  # Minimum number of characters (relaxed, structure validation handles quality)
+TWO_STAGE_MIN_CONFIDENCE = 0.55  # Minimum average confidence (lowered from 0.60)
+TWO_STAGE_USE_PREPROCESSING = True  # Apply resize and perspective correction
+# Note: Removed strict size/aspect/blur checks - using smart Nepali plate structure validation instead
+
+# EasyOCR Settings
 OCR_LANGUAGES = ['en', 'ne']        # Languages for OCR (English and Nepali only)
 AVAILABLE_OCR_LANGUAGES = ['en', 'ne']  # Available language options
 OCR_GPU_ENABLED = True              # Enable/disable GPU acceleration for OCR
@@ -125,8 +144,8 @@ MAX_HISTORY_FRAMES = 8             # Reduced from 10 for faster processing
 MAX_CANDIDATES_PER_VEHICLE = 8     # Increased from 5 for better consensus (more samples)
 
 # Debug settings (disable in production for better performance)
-DEBUG_SAVE_IMAGES = False  # Set to True only for debugging OCR issues
-DEBUG_OCR_VERBOSE = False  # Set to True only for debugging OCR issues
+DEBUG_SAVE_IMAGES = True  # Set to True only for debugging OCR issues
+DEBUG_OCR_VERBOSE = True  # Set to True only for debugging OCR issues (TEMPORARILY ENABLED)
 
 # ===== Parking Fee Settings =====
 # Hourly rate for parking fee calculation (in NPR)

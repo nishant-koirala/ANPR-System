@@ -356,6 +356,9 @@ class LoginDialog(QDialog):
     def on_login_failed(self, error_message):
         """Handle failed login"""
         self.set_login_state(False)
+        
+        # Show the actual error message from auth_manager
+        # This will include "Account is suspended" or "Invalid username or password"
         self.show_error(error_message)
         
         # Clear password field

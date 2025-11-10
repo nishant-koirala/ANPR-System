@@ -1,8 +1,15 @@
-# Python
+# ============================================
+# NEPALI ANPR SYSTEM - .gitignore
+# ============================================
+
+# ==================== PYTHON ====================
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -16,6 +23,8 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -32,17 +41,20 @@ pip-delete-this-directory.txt
 # Unit test / coverage reports
 htmlcov/
 .tox/
+.nox/
 .coverage
 .coverage.*
 .cache
 nosetests.xml
 coverage.xml
 *.cover
+*.py,cover
 .hypothesis/
 .pytest_cache/
 
 # Environments
 .env
+.env.local
 .venv
 env/
 venv/
@@ -50,103 +62,251 @@ ENV/
 env.bak/
 venv.bak/
 
-# IDE
+# ==================== IDE / EDITORS ====================
+# VSCode
 .vscode/
+*.code-workspace
+
+# PyCharm
 .idea/
+*.iml
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
 *.swp
 *.swo
 *~
+.vim/
 
-# OS
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ==================== OS ====================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
 .DS_Store
 .DS_Store?
 ._*
+.AppleDouble
+.LSOverride
 .Spotlight-V100
 .Trashes
-ehthumbs.db
-Thumbs.db
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
 
-# Project specific
-debug_*.jpg
-test_plate_*.jpg
-simple_test_plate.jpg
-*.mp4
-models/*.pt
-!models/README.md
+# Linux
+*~
+.directory
+.Trash-*
 
-# Temporary files
-*.tmp
-*.temp
-*.log
-
-# Video files
-*.mp4
-
-# Testing files
-test_*.py
-debug_*.py
-best.pt
-{{ ... }}
-yolov8n.pt
-yolov8m.pt
-yolov8l.pt
-yolov8x.pt
-
-# Project directories
-sort/
-automatic-number-plate-recognition-python-yolov8/
-deep_sort/
-ByteTrack/
-1.0.0
-8.0.0
-
-# Test files and directories
-tests/
-
-# Sample/demo video files
-Sample3.mp4
-sample*.mp4
-Sample*.mp4
-*.mp4
-
-# Database files (runtime generated)
-anpr_database.db
-anpr_database.db-*
+# ==================== DATABASE ====================
+# SQLite databases (runtime generated)
 *.db
-*.db-*
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+anpr_database.db*
 
+# Database backups
+*.db.backup
+*.db.bak
+database_backup/
+
+# ==================== MODELS & WEIGHTS ====================
+# YOLO models (large files - download separately)
+*.pt
+*.pth
+*.weights
+*.onnx
+yolov8*.pt
+best.pt
+model.pth
+
+# Keep model directory structure
+!models/
+!models/README.md
+!modelcheck/
+!modelcheck/README.md
+
+# ==================== MEDIA FILES ====================
+# Videos (large files)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+Sample*.mp4
+sample*.mp4
+video_*.mp4
+
+# Images (generated/temporary)
+debug_*.jpg
+debug_*.png
+test_plate_*.jpg
+test_plate_*.png
+simple_test_plate.jpg
+plate_images/
+debug_frames/
+temp_images/
+
+# Keep sample images for documentation
+!docs/images/
+!examples/images/
+
+# ==================== LOGS & REPORTS ====================
 # Log files
 *.log
 logs/
+*.log.*
 
-# Model files (large, can be downloaded)
-*.pt
-yolov8*.pt
+# Reports
+reports/
+*.pdf
+*.xlsx
+*.csv
 
-# Debug and validation files
+# Keep example reports
+!docs/reports/
+
+# ==================== TESTING & DEBUG ====================
+# Test files
+test_*.py
+*_test.py
 debug_*.py
-*_validation.py
+*_debug.py
+check_*.py
+fix_*.py
+validate_*.py
 
-# Temporary/utility files
-python
-1.0.0
-8.0.0
-fix_database.py
-init_database.py
-check_database.py
+# Keep important test scripts
+!test_stolen_detection.py
+!debug_stolen_check.py
 
-# Plate images directory
-plate_images/
+# Test data
+test_data/
+test_videos/
+test_images/
 
-# Documentation (keep README.md)
-SYSTEM_DOCUMENTATION.txt
+# ==================== DOCUMENTATION (TEMPORARY) ====================
+# Generated documentation files (keep in docs/)
+*_COMPLETE.md
+*_FIXED.md
+*_FEATURE.md
+*_ANALYSIS.md
+*_TROUBLESHOOTING.md
+BUG_*.md
+PHASE*.md
+ALERT_*.md
+EDIT_*.md
+SESSION_*.md
+INTEGRATION_*.md
+HOW_TO_*.md
 
-# Data directories
+# Keep main documentation
+!README.md
+!INSTALLATION.md
+!USER_GUIDE.md
+!API_DOCUMENTATION.md
+!CHANGELOG.md
+!LICENSE.md
+
+# ==================== PROJECT SPECIFIC ====================
+# Third-party tracking libraries (if cloned)
+sort/
+deep_sort/
+ByteTrack/
+automatic-number-plate-recognition-python-yolov8/
+
+# Temporary directories
+temp/
+tmp/
+cache/
+.cache/
+
+# User data (sensitive)
+user_data/
+credentials/
+secrets/
+
+# Photo data directory
 photo data/
 
-# File types
-*.csv
-*.log
-*.db
-*.txt
-reports/
+# UI Preview files (development only)
+UI_PREVIEW/
+
+# ==================== CONFIGURATION ====================
+# Local configuration (keep template)
+config/local_settings.py
+config/secrets.py
+.env.local
+
+# Keep default configs
+!config/settings.py
+!config/license_formats.py
+
+# ==================== MISC ====================
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+~*
+
+# Compiled files
+*.pyc
+*.pyo
+
+# System files
+.DS_Store
+desktop.ini
+
+# Version control
+.git/
+.gitattributes
+
+# Package manager
+node_modules/
+package-lock.json
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+DIAGRAMS/
+DOCUMENTATION/
+FINAL_STATUS.md
+GIT_COMMIT_GUIDE.md
+.$ANPR_USE_CASE_DIAGRAM.drawio.dtmp
+.$ANPR_USE_CASE_SIMPLIFIED.drawio.bkp
+PROBLEM_SOLVED.md
+database_migration_special_vehicles.py
+modelcheck/
+PROJECT_REPORT/
+debug_stolen_check.py
+docs/SYSTEM_DOCUMENTATION.txt
+docs/SYSTEM_DOCUMENTATION.txt
+GIT_COMMIT_GUIDE.md
+# ==================== KEEP THESE ====================
+# Essential project files (explicitly keep)
+
+!.gitignore

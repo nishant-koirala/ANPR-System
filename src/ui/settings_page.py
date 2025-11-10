@@ -234,7 +234,37 @@ class SettingsPage(QWidget):
         layout.setSpacing(10)
         layout.setContentsMargins(15, 15, 15, 15)
         
-        # OCR language
+        # Recognition method selector
+        method_layout = QHBoxLayout()
+        method_layout.setSpacing(10)
+        method_label = QLabel("Recognition Method:")
+        method_label.setMinimumWidth(120)
+        method_layout.addWidget(method_label)
+        self.recognition_method_combo = QComboBox()
+        self.recognition_method_combo.addItems([
+            "EasyOCR (Default OCR Pipeline)",
+            "Two-Stage Pipeline (YOLO + CNN Character Recognition)"
+        ])
+        self.recognition_method_combo.setMaximumWidth(400)
+        method_layout.addWidget(self.recognition_method_combo)
+        method_layout.addStretch()
+        layout.addLayout(method_layout)
+        
+        # Add info label for recognition method
+        info_label = QLabel("ℹ️ Two-Stage uses YOLO for character segmentation + CNN for classification")
+        info_label.setStyleSheet("color: #666; font-size: 11px; padding-left: 125px;")
+        layout.addWidget(info_label)
+        
+        # Connect method change to update UI
+        self.recognition_method_combo.currentTextChanged.connect(self.on_recognition_method_changed)
+        
+        # === EasyOCR-specific settings ===
+        self.easyocr_settings_widget = QWidget()
+        easyocr_layout = QVBoxLayout(self.easyocr_settings_widget)
+        easyocr_layout.setContentsMargins(0, 0, 0, 0)
+        easyocr_layout.setSpacing(10)
+        
+        # OCR language (EasyOCR only)
         lang_layout = QHBoxLayout()
         lang_layout.setSpacing(10)
         lang_label = QLabel("Language:")
@@ -245,9 +275,9 @@ class SettingsPage(QWidget):
         self.lang_combo.setMaximumWidth(200)
         lang_layout.addWidget(self.lang_combo)
         lang_layout.addStretch()
-        layout.addLayout(lang_layout)
+        easyocr_layout.addLayout(lang_layout)
         
-        # License plate format selector
+        # License plate format selector (EasyOCR only)
         format_layout = QHBoxLayout()
         format_layout.setSpacing(10)
         format_label = QLabel("License Format:")
@@ -258,9 +288,9 @@ class SettingsPage(QWidget):
         self.format_combo.setMaximumWidth(300)
         format_layout.addWidget(self.format_combo)
         format_layout.addStretch()
-        layout.addLayout(format_layout)
+        easyocr_layout.addLayout(format_layout)
         
-        # Character whitelist
+        # Character whitelist (EasyOCR only)
         whitelist_layout = QHBoxLayout()
         whitelist_layout.setSpacing(10)
         whitelist_label = QLabel("Character Whitelist:")
@@ -270,16 +300,72 @@ class SettingsPage(QWidget):
         self.whitelist_edit.setMaximumWidth(400)
         whitelist_layout.addWidget(self.whitelist_edit)
         whitelist_layout.addStretch()
-        layout.addLayout(whitelist_layout)
+        easyocr_layout.addLayout(whitelist_layout)
         
-        # Post-processing
-        post_layout = QHBoxLayout()
-        post_layout.setSpacing(10)
-        self.post_check = QCheckBox("Enable Post-processing")
-        self.post_check.setChecked(True)
-        post_layout.addWidget(self.post_check)
-        post_layout.addStretch()
-        layout.addLayout(post_layout)
+        layout.addWidget(self.easyocr_settings_widget)
+        
+        # === Two-Stage-specific settings ===
+        self.twostage_settings_widget = QWidget()
+        twostage_layout = QVBoxLayout(self.twostage_settings_widget)
+        twostage_layout.setContentsMargins(0, 0, 0, 0)
+        twostage_layout.setSpacing(10)
+        
+        # YOLO Confidence Threshold
+        yolo_conf_layout = QHBoxLayout()
+        yolo_conf_label = QLabel("YOLO Confidence:")
+        yolo_conf_label.setMinimumWidth(120)
+        yolo_conf_layout.addWidget(yolo_conf_label)
+        self.yolo_conf_spin = QDoubleSpinBox()
+        self.yolo_conf_spin.setRange(0.1, 0.9)
+        self.yolo_conf_spin.setSingleStep(0.05)
+        self.yolo_conf_spin.setValue(0.35)
+        self.yolo_conf_spin.setMaximumWidth(100)
+        yolo_conf_layout.addWidget(self.yolo_conf_spin)
+        yolo_conf_layout.addWidget(QLabel("(Higher = more accurate, fewer detections)"))
+        yolo_conf_layout.addStretch()
+        twostage_layout.addLayout(yolo_conf_layout)
+        
+        # Minimum Confidence
+        min_conf_layout = QHBoxLayout()
+        min_conf_label = QLabel("Min Confidence:")
+        min_conf_label.setMinimumWidth(120)
+        min_conf_layout.addWidget(min_conf_label)
+        self.min_conf_spin = QDoubleSpinBox()
+        self.min_conf_spin.setRange(0.3, 0.9)
+        self.min_conf_spin.setSingleStep(0.05)
+        self.min_conf_spin.setValue(0.60)
+        self.min_conf_spin.setMaximumWidth(100)
+        min_conf_layout.addWidget(self.min_conf_spin)
+        min_conf_layout.addWidget(QLabel("(Minimum average confidence to accept plate)"))
+        min_conf_layout.addStretch()
+        twostage_layout.addLayout(min_conf_layout)
+        
+        # Minimum Characters
+        min_chars_layout = QHBoxLayout()
+        min_chars_label = QLabel("Min Characters:")
+        min_chars_label.setMinimumWidth(120)
+        min_chars_layout.addWidget(min_chars_label)
+        self.min_chars_spin = QSpinBox()
+        self.min_chars_spin.setRange(3, 10)
+        self.min_chars_spin.setValue(5)
+        self.min_chars_spin.setMaximumWidth(100)
+        min_chars_layout.addWidget(self.min_chars_spin)
+        min_chars_layout.addWidget(QLabel("(Minimum plate length)"))
+        min_chars_layout.addStretch()
+        twostage_layout.addLayout(min_chars_layout)
+        
+        # Preprocessing checkbox
+        preprocess_layout = QHBoxLayout()
+        self.preprocess_check = QCheckBox("Enable Preprocessing (resize & perspective correction)")
+        self.preprocess_check.setChecked(True)
+        preprocess_layout.addWidget(self.preprocess_check)
+        preprocess_layout.addStretch()
+        twostage_layout.addLayout(preprocess_layout)
+        
+        layout.addWidget(self.twostage_settings_widget)
+        
+        # Load current settings
+        self.load_recognition_method_settings()
         
         return group
 
@@ -479,6 +565,7 @@ class SettingsPage(QWidget):
         try:
             self.save_parking_settings()
             self.save_format_settings()
+            self.save_recognition_method_settings()
             self.save_video_settings()
             QMessageBox.information(self, "Settings Saved", 
                                   "Settings have been saved successfully!\nRestart the application for all changes to take effect.")
@@ -558,6 +645,61 @@ class SettingsPage(QWidget):
         except:
             pass
     
+    def save_recognition_method_settings(self):
+        """Save recognition method settings to config file"""
+        import os
+        import re
+        
+        # Read current config file
+        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'settings.py')
+        
+        with open(config_path, 'r') as f:
+            content = f.read()
+        
+        # Map combo box selection to method key
+        method_mapping = {
+            "EasyOCR (Default OCR Pipeline)": "easyocr",
+            "Two-Stage Pipeline (YOLO + CNN Character Recognition)": "two_stage"
+        }
+        
+        selected_method = method_mapping.get(self.recognition_method_combo.currentText(), "easyocr")
+        
+        # Update recognition method setting in config file
+        content = re.sub(r'RECOGNITION_METHOD = "[^"]*"', 
+                        f'RECOGNITION_METHOD = "{selected_method}"', content)
+        
+        # Update two-stage specific settings
+        yolo_conf = self.yolo_conf_spin.value()
+        min_conf = self.min_conf_spin.value()
+        min_chars = self.min_chars_spin.value()
+        preprocess = self.preprocess_check.isChecked()
+        
+        content = re.sub(r'TWO_STAGE_CONF_THRESHOLD = [\d.]+', 
+                        f'TWO_STAGE_CONF_THRESHOLD = {yolo_conf}', content)
+        content = re.sub(r'TWO_STAGE_MIN_CONFIDENCE = [\d.]+', 
+                        f'TWO_STAGE_MIN_CONFIDENCE = {min_conf}', content)
+        content = re.sub(r'TWO_STAGE_MIN_CHARS = \d+', 
+                        f'TWO_STAGE_MIN_CHARS = {min_chars}', content)
+        content = re.sub(r'TWO_STAGE_USE_PREPROCESSING = (True|False)', 
+                        f'TWO_STAGE_USE_PREPROCESSING = {preprocess}', content)
+        
+        # Write back to file
+        with open(config_path, 'w') as f:
+            f.write(content)
+        
+        # Update runtime values if possible
+        try:
+            import sys
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+            import config.settings as settings
+            settings.RECOGNITION_METHOD = selected_method
+            settings.TWO_STAGE_CONF_THRESHOLD = yolo_conf
+            settings.TWO_STAGE_MIN_CONFIDENCE = min_conf
+            settings.TWO_STAGE_MIN_CHARS = min_chars
+            settings.TWO_STAGE_USE_PREPROCESSING = preprocess
+        except:
+            pass
+    
     def load_format_settings(self):
         """Load current format settings from config"""
         try:
@@ -580,6 +722,47 @@ class SettingsPage(QWidget):
                 self.format_combo.setCurrentIndex(index)
         except ImportError:
             pass  # Use default selection
+    
+    def load_recognition_method_settings(self):
+        """Load current recognition method settings from config"""
+        try:
+            import sys
+            import os
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+            from config.settings import (RECOGNITION_METHOD, TWO_STAGE_CONF_THRESHOLD, 
+                                        TWO_STAGE_MIN_CONFIDENCE, TWO_STAGE_MIN_CHARS,
+                                        TWO_STAGE_USE_PREPROCESSING)
+            
+            # Map method key to combo box text
+            method_mapping = {
+                "easyocr": "EasyOCR (Default OCR Pipeline)",
+                "two_stage": "Two-Stage Pipeline (YOLO + CNN Character Recognition)"
+            }
+            
+            display_text = method_mapping.get(RECOGNITION_METHOD, "EasyOCR (Default OCR Pipeline)")
+            index = self.recognition_method_combo.findText(display_text)
+            if index >= 0:
+                self.recognition_method_combo.setCurrentIndex(index)
+            
+            # Load two-stage specific settings
+            self.yolo_conf_spin.setValue(TWO_STAGE_CONF_THRESHOLD)
+            self.min_conf_spin.setValue(TWO_STAGE_MIN_CONFIDENCE)
+            self.min_chars_spin.setValue(TWO_STAGE_MIN_CHARS)
+            self.preprocess_check.setChecked(TWO_STAGE_USE_PREPROCESSING)
+            
+            # Update UI visibility based on current method
+            self.on_recognition_method_changed(display_text)
+            
+        except ImportError:
+            pass  # Use default selection
+    
+    def on_recognition_method_changed(self, method_text):
+        """Show/hide settings based on selected recognition method"""
+        is_easyocr = "EasyOCR" in method_text
+        
+        # Show/hide appropriate settings
+        self.easyocr_settings_widget.setVisible(is_easyocr)
+        self.twostage_settings_widget.setVisible(not is_easyocr)
 
     def save_video_settings(self):
         """Save video processing settings to config file"""

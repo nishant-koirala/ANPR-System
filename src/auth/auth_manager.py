@@ -52,10 +52,9 @@ class AuthManager:
             Dict with user info and session details
         """
         with self.get_session() as session:
-            # Find user
+            # Find user - Don't filter by status yet, we need to check it separately
             user = session.query(User).filter(
-                User.username == username,
-                User.status == UserStatus.ACTIVE
+                User.username == username
             ).first()
             
             if not user:
@@ -63,14 +62,24 @@ class AuthManager:
                               ip_address=ip_address, success=False)
                 raise AuthenticationError("Invalid username or password")
             
+            # Check if account is suspended BEFORE password verification
+            if user.status == UserStatus.SUSPENDED:
+                self._log_audit(user.user_id, "LOGIN_DENIED", details="Account suspended", 
+                              ip_address=ip_address, success=False)
+                print(f"❌ LOGIN DENIED: Account '{username}' is SUSPENDED")
+                raise AuthenticationError("Account is suspended. Contact administrator.")
+            
+            # Check if account is inactive
+            if user.status == UserStatus.INACTIVE:
+                self._log_audit(user.user_id, "LOGIN_DENIED", details="Account inactive", 
+                              ip_address=ip_address, success=False)
+                print(f"❌ LOGIN DENIED: Account '{username}' is INACTIVE")
+                raise AuthenticationError("Account is inactive. Contact administrator.")
+            
             # Check password
             if not self.verify_password(password, user.password_hash):
                 # Increment failed attempts
                 user.failed_login_attempts += 1
-                session.commit()
-                
-                self._log_audit(user.user_id, "LOGIN_FAILED", details="Invalid password", 
-                              ip_address=ip_address, success=False)
                 
                 # Lock account after 5 failed attempts
                 if user.failed_login_attempts >= 5:
@@ -78,14 +87,15 @@ class AuthManager:
                     session.commit()
                     self._log_audit(user.user_id, "ACCOUNT_SUSPENDED", 
                                   details="Too many failed login attempts", ip_address=ip_address)
+                    print(f"🔒 ACCOUNT SUSPENDED: User '{username}' locked after 5 failed login attempts")
+                    raise AuthenticationError("Account suspended due to too many failed login attempts. Contact administrator.")
+                
+                session.commit()
+                
+                self._log_audit(user.user_id, "LOGIN_FAILED", details="Invalid password", 
+                              ip_address=ip_address, success=False)
                 
                 raise AuthenticationError("Invalid username or password")
-            
-            # Check if account is suspended
-            if user.status == UserStatus.SUSPENDED:
-                self._log_audit(user.user_id, "LOGIN_DENIED", details="Account suspended", 
-                              ip_address=ip_address, success=False)
-                raise AuthenticationError("Account is suspended")
             
             # Create session
             session_id = self.generate_session_id()

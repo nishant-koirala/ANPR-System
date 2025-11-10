@@ -44,6 +44,8 @@ class ANPRApplication(PlateDetectorDashboard):
     stopRequested = pyqtSignal()
     # Signal to request vehicle model reload in worker
     reloadRequested = pyqtSignal(str)
+    # Signal for stolen vehicle detection
+    stolen_vehicle_detected = pyqtSignal(dict)
 
     def __init__(self, auth_manager=None):
         super().__init__(auth_manager=auth_manager)
@@ -91,6 +93,15 @@ class ANPRApplication(PlateDetectorDashboard):
                 self.worker.set_debug_dir(self.debug_dir)
             except Exception:
                 pass
+        
+        # Connect stolen vehicle alert signal
+        self.stolen_vehicle_detected.connect(self.show_stolen_vehicle_alert)
+        
+        # Setup timer to check for stolen vehicle alerts
+        from PyQt5.QtCore import QTimer
+        self.alert_check_timer = QTimer(self)
+        self.alert_check_timer.timeout.connect(self.check_stolen_alerts)
+        self.alert_check_timer.start(1000)  # Check every second
 
     def init_database(self):
         """Initialize database connection and components"""
@@ -553,6 +564,69 @@ class ANPRApplication(PlateDetectorDashboard):
             print(f"Error closing database: {e}")
         
         super().closeEvent(event)
+    
+    def check_stolen_alerts(self):
+        """Check for new stolen vehicle alerts from toggle manager"""
+        if hasattr(self, 'toggle_manager') and self.toggle_manager:
+            alert_data = self.toggle_manager.get_and_clear_stolen_alert()
+            if alert_data:
+                # Emit signal to show alert
+                self.stolen_vehicle_detected.emit(alert_data)
+    
+    def show_stolen_vehicle_alert(self, alert_data):
+        """
+        Show alert when stolen vehicle is detected
+        
+        Args:
+            alert_data: Dictionary with stolen vehicle information
+        """
+        plate = alert_data.get('plate_number', 'Unknown')
+        owner = alert_data.get('owner_name', 'Unknown')
+        vehicle_type = alert_data.get('vehicle_type', 'Unknown')
+        reported_date = alert_data.get('reported_date', 'Unknown')
+        
+        # Create alert message box with critical icon
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Critical)
+        msg.setWindowTitle("🚨 STOLEN VEHICLE DETECTED!")
+        msg.setText(f"<h2 style='color: #e74c3c;'>⚠️ STOLEN VEHICLE ALERT</h2>")
+        msg.setInformativeText(
+            f"<b>Plate Number:</b> {plate}<br>"
+            f"<b>Owner:</b> {owner}<br>"
+            f"<b>Vehicle Type:</b> {vehicle_type}<br>"
+            f"<b>Reported Date:</b> {reported_date}<br><br>"
+            f"<span style='color: #e74c3c;'><b>⚠️ Contact authorities immediately!</b></span>"
+        )
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #fff5f5;
+            }
+            QLabel {
+                font-size: 14px;
+            }
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+        """)
+        
+        # Play alert sound if available
+        try:
+            from PyQt5.QtMultimedia import QSound
+            # You can add a sound file path here
+            # QSound.play("path/to/alert.wav")
+        except:
+            pass
+        
+        # Show the alert
+        msg.exec_()
 
 def main():
     """Main application entry point"""

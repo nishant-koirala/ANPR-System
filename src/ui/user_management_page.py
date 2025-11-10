@@ -259,10 +259,10 @@ class UserManagementPage(QWidget):
         
         # Users table
         self.users_table = QTableWidget()
-        self.users_table.setColumnCount(7)
+        self.users_table.setColumnCount(8)
         self.users_table.setHorizontalHeaderLabels([
             "ID", "Username", "Full Name", "Email", 
-            "Roles", "Last Login", "Actions"
+            "Status", "Roles", "Last Login", "Actions"
         ])
         
         # Set table properties
@@ -277,12 +277,13 @@ class UserManagementPage(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Username
         header.setSectionResizeMode(2, QHeaderView.Stretch)           # Full Name
         header.setSectionResizeMode(3, QHeaderView.Stretch)           # Email
-        header.setSectionResizeMode(4, QHeaderView.Stretch)           # Roles
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Last Login
-        header.setSectionResizeMode(6, QHeaderView.Fixed)             # Actions
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(5, QHeaderView.Stretch)           # Roles
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Last Login
+        header.setSectionResizeMode(7, QHeaderView.Fixed)             # Actions
         
         # Set minimum width for Actions column to show buttons properly
-        self.users_table.setColumnWidth(6, 200)  # Wide enough for Edit + Delete buttons
+        self.users_table.setColumnWidth(7, 200)  # Wide enough for Edit + Delete buttons
         
         # Status bar
         self.status_label = QLabel("Ready")
@@ -414,11 +415,22 @@ class UserManagementPage(QWidget):
                     self.users_table.setItem(row, 1, QTableWidgetItem(user.username))
                     self.users_table.setItem(row, 2, QTableWidgetItem(user.full_name or ""))
                     self.users_table.setItem(row, 3, QTableWidgetItem(user.email))
-                    self.users_table.setItem(row, 4, QTableWidgetItem(roles_text))
+                    
+                    # Status with color coding
+                    status_item = QTableWidgetItem(user.status.value)
+                    if user.status.value == "ACTIVE":
+                        status_item.setForeground(Qt.darkGreen)
+                    elif user.status.value == "SUSPENDED":
+                        status_item.setForeground(Qt.red)
+                    else:
+                        status_item.setForeground(Qt.gray)
+                    self.users_table.setItem(row, 4, status_item)
+                    
+                    self.users_table.setItem(row, 5, QTableWidgetItem(roles_text))
                     
                     # Last login
                     last_login = user.last_login.strftime("%Y-%m-%d %H:%M") if user.last_login else "Never"
-                    self.users_table.setItem(row, 5, QTableWidgetItem(last_login))
+                    self.users_table.setItem(row, 6, QTableWidgetItem(last_login))
                     
                     # Action buttons - Use direct QPushButton for reliability
                     actions_widget = QWidget()
@@ -471,10 +483,9 @@ class UserManagementPage(QWidget):
                     
                     actions_layout.addWidget(edit_btn)
                     actions_layout.addWidget(delete_btn)
-                    actions_layout.addStretch()
-                    actions_widget.setLayout(actions_layout)
                     
-                    self.users_table.setCellWidget(row, 6, actions_widget)
+                    actions_widget.setLayout(actions_layout)
+                    self.users_table.setCellWidget(row, 7, actions_widget)
                 
                 self.status_label.setText(f"Loaded {len(users)} users")
                 
@@ -499,15 +510,112 @@ class UserManagementPage(QWidget):
                 if not any(search_text in field for field in [username, fullname, email]):
                     show_row = False
             
-            # Status filter - removed since status column no longer exists
+            # Status filter (column 4)
+            if status_filter != "All Status":
+                status = self.users_table.item(row, 4).text()
+                if status != status_filter:
+                    show_row = False
             
             self.users_table.setRowHidden(row, not show_row)
     
     def edit_user(self, user_id):
-        """Edit user (placeholder)"""
+        """Edit user - Change status and reset failed attempts"""
         if not self.check_permissions():
             return
-        QMessageBox.information(self, "Edit User", f"Edit user functionality for ID {user_id} - Coming soon!")
+        
+        try:
+            from ..db.rbac_models import User, UserStatus
+            
+            # Get user info first (extract all data before session closes)
+            with self.auth_manager.get_session() as session:
+                user = session.query(User).filter(User.user_id == user_id).first()
+                if not user:
+                    QMessageBox.warning(self, "Error", "User not found")
+                    return
+                
+                # Extract all needed data while session is active
+                username = user.username
+                email = user.email
+                current_status = user.status.value
+                failed_attempts = user.failed_login_attempts
+            
+            # Create edit dialog (outside session context)
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Edit User: {username}")
+            dialog.setFixedSize(400, 300)
+            
+            layout = QVBoxLayout()
+            
+            # User info
+            info_label = QLabel(f"<b>Username:</b> {username}<br>"
+                               f"<b>Email:</b> {email}<br>"
+                               f"<b>Current Status:</b> {current_status}<br>"
+                               f"<b>Failed Attempts:</b> {failed_attempts}")
+            layout.addWidget(info_label)
+            
+            # Status selection
+            status_group = QGroupBox("Change Status")
+            status_layout = QVBoxLayout()
+            
+            status_combo = QComboBox()
+            status_combo.addItems(["ACTIVE", "SUSPENDED", "INACTIVE"])
+            status_combo.setCurrentText(current_status)
+            status_layout.addWidget(QLabel("Status:"))
+            status_layout.addWidget(status_combo)
+            
+            status_group.setLayout(status_layout)
+            layout.addWidget(status_group)
+            
+            # Reset failed attempts checkbox
+            reset_attempts_cb = QCheckBox("Reset failed login attempts to 0")
+            if failed_attempts > 0:
+                reset_attempts_cb.setChecked(True)
+            layout.addWidget(reset_attempts_cb)
+            
+            # Buttons
+            button_layout = QHBoxLayout()
+            save_btn = QPushButton("Save Changes")
+            cancel_btn = QPushButton("Cancel")
+            
+            button_layout.addWidget(cancel_btn)
+            button_layout.addWidget(save_btn)
+            layout.addLayout(button_layout)
+            
+            dialog.setLayout(layout)
+            
+            # Connect buttons
+            def save_changes():
+                try:
+                    # Open new session for saving
+                    with self.auth_manager.get_session() as save_session:
+                        user = save_session.query(User).filter(User.user_id == user_id).first()
+                        if not user:
+                            QMessageBox.warning(self, "Error", "User not found")
+                            return
+                        
+                        new_status = status_combo.currentText()
+                        user.status = UserStatus[new_status]
+                        
+                        if reset_attempts_cb.isChecked():
+                            user.failed_login_attempts = 0
+                        
+                        save_session.commit()
+                    
+                    QMessageBox.information(self, "Success", 
+                                          f"User '{username}' updated successfully!")
+                    dialog.accept()
+                    self.load_users()
+                    
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to save changes: {str(e)}")
+            
+            save_btn.clicked.connect(save_changes)
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            dialog.exec_()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to edit user: {str(e)}")
     
     def delete_user(self, user_id):
         """Delete user"""

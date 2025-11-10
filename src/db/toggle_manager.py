@@ -11,6 +11,7 @@ import difflib
 
 from .database import Database, get_database
 from .models import ToggleMode, VehicleLog
+from .special_vehicles_db import SpecialVehiclesDB
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,18 @@ class ToggleManager:
         self.cooldown_minutes = cooldown_minutes
         self.exit_similarity_threshold = exit_similarity_threshold
         
+        # Initialize special vehicles database
+        try:
+            self.special_db = SpecialVehiclesDB(self.db.get_session)
+        except Exception as e:
+            logger.warning(f"Special vehicles database not available: {e}")
+            self.special_db = None
+        
         # Cache for recent detections to avoid database queries
         self._recent_detections: Dict[str, Dict[str, Any]] = {}
+        
+        # Store last stolen vehicle alert for UI pickup
+        self._last_stolen_alert = None
     
     def calculate_plate_similarity(self, plate1: str, plate2: str) -> float:
         """
@@ -234,6 +245,10 @@ class ToggleManager:
         )
         
         logger.info(f"Vehicle logged: {plate_text} - {toggle_mode.value} (log_id: {log_id})")
+        
+        # Check if this is a stolen vehicle
+        self._check_stolen_vehicle(plate_text, raw_log_id)
+        
         return log_id
     
     def _is_recent_detection(self, plate_text: str) -> bool:
@@ -304,3 +319,62 @@ class ToggleManager:
             'current_location': last_log.location_info,
             'last_toggle': last_log.toggle_mode.value
         }
+    
+    def _check_stolen_vehicle(self, plate_text: str, raw_log_id: int):
+        """
+        Check if detected plate is a stolen vehicle and log alert
+        
+        Args:
+            plate_text: Detected plate number
+            raw_log_id: Raw log ID for reference
+        """
+        if not self.special_db:
+            logger.debug("Special vehicles DB not available")
+            return
+        
+        try:
+            logger.debug(f"Checking if {plate_text} is stolen...")
+            # Check if this plate is in stolen vehicles database
+            stolen_vehicle = self.special_db.check_if_stolen(plate_text)
+            logger.debug(f"Stolen vehicle check result: {stolen_vehicle}")
+            
+            if stolen_vehicle:
+                # Check alert cooldown to avoid spam
+                config = self.special_db.get_alert_config()
+                cooldown_minutes = config.alert_cooldown_minutes if config else 5
+                
+                if self.special_db.check_alert_cooldown(stolen_vehicle.id, cooldown_minutes):
+                    # Log the alert
+                    alert = self.special_db.log_stolen_vehicle_alert(
+                        stolen_vehicle_id=stolen_vehicle.id,
+                        raw_log_id=raw_log_id,
+                        alert_sent_dashboard=True
+                    )
+                    
+                    if alert:
+                        logger.warning(f"🚨 STOLEN VEHICLE DETECTED: {plate_text} (Owner: {stolen_vehicle.owner_name})")
+                        
+                        # Store alert data for UI to pick up
+                        self._last_stolen_alert = {
+                            'plate_number': plate_text,
+                            'owner_name': stolen_vehicle.owner_name or 'Unknown',
+                            'vehicle_type': stolen_vehicle.vehicle_type or 'Unknown',
+                            'reported_date': stolen_vehicle.reported_date.strftime('%Y-%m-%d') if stolen_vehicle.reported_date else 'Unknown',
+                            'alert_id': alert.id,
+                            'timestamp': datetime.utcnow()
+                        }
+                else:
+                    logger.info(f"Stolen vehicle {plate_text} detected but alert in cooldown period")
+        except Exception as e:
+            logger.error(f"Error checking stolen vehicle: {e}")
+    
+    def get_and_clear_stolen_alert(self):
+        """
+        Get the last stolen vehicle alert and clear it
+        
+        Returns:
+            Dictionary with alert data or None
+        """
+        alert = self._last_stolen_alert
+        self._last_stolen_alert = None
+        return alert

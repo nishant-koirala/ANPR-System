@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QImage, QFont, QIntValidator, QDoubleValidator
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
+from src.ui.special_vehicles_page import SpecialVehiclesPage
 from sort.sort import Sort
 from config import settings
 from config.license_formats import FORMAT_DISPLAY_NAMES
@@ -561,6 +562,15 @@ class PlateDetectorDashboard(QWidget):
             self.settings_page = self.build_settings_page()
             self.sidebar_pages.append(self.stack.addWidget(self.settings_page))
         
+        # Special Vehicles - Admin and above only
+        if self.rbac_controller and self.rbac_controller.can_view_settings():
+            print("DEBUG: Adding Special Vehicles to sidebar...")
+            self.sidebar_items.append("🚗 Special Vehicles")
+            self.special_vehicles_page = self.build_special_vehicles_page()
+            page_index = self.stack.addWidget(self.special_vehicles_page)
+            self.sidebar_pages.append(page_index)
+            print(f"DEBUG: Special Vehicles added at stack index {page_index}")
+        
         # Logout - all users
         self.sidebar_items.append("🚪 Logout")
         self.sidebar_pages.append(-1)  # Special case for logout
@@ -696,6 +706,24 @@ class PlateDetectorDashboard(QWidget):
             page = QWidget()
             layout = QVBoxLayout(page)
             error_label = QLabel(f"Analytics page error: {e}\n\nCheck console for details")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setWordWrap(True)
+            layout.addWidget(error_label)
+            return page
+
+    def build_special_vehicles_page(self):
+        """Build Special Vehicles Management page"""
+        try:
+            page = SpecialVehiclesPage(rbac_controller=self.rbac_controller)
+            return page
+        except Exception as e:
+            # Fallback if special vehicles page has errors
+            print(f"Error creating Special Vehicles page: {e}")
+            import traceback
+            traceback.print_exc()
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            error_label = QLabel(f"Special Vehicles page error: {e}\n\nCheck console for details")
             error_label.setAlignment(Qt.AlignCenter)
             error_label.setWordWrap(True)
             layout.addWidget(error_label)
@@ -1464,6 +1492,13 @@ class PlateDetectorDashboard(QWidget):
                 self.sidebar_items.append("⚙ Settings")
                 self.sidebar_pages.append(page_index)
                 page_index += 1
+            
+            # Special Vehicles - Admin and above only
+            if is_logged_in and self.rbac_controller and self.rbac_controller.can_view_settings():
+                self.sidebar_items.append("🚗 Special Vehicles")
+                self.sidebar_pages.append(page_index)
+                page_index += 1
+                print(f"DEBUG: Special Vehicles added to sidebar at index {page_index-1}")
             
             # Login/Logout based on login status
             if is_logged_in:
@@ -2348,19 +2383,11 @@ class PlateDetectorDashboard(QWidget):
                                       f"4. IP address is correct (check DroidCam app)")
                     return
             else:
-                # Regular camera by index
-                if isinstance(self.selected_camera_index, str):
-                    self.webcam = cv2.VideoCapture(self.selected_camera_index, cv2.CAP_DSHOW)
-                    if not self.webcam.isOpened():
-                        self.webcam = cv2.VideoCapture(self.selected_camera_index)
-                else:
-                    self.webcam = cv2.VideoCapture(self.selected_camera_index, cv2.CAP_DSHOW)
-                    if not self.webcam.isOpened():
-                        self.webcam = cv2.VideoCapture(self.selected_camera_index)
-                
-                if not self.webcam.isOpened():
-                    QMessageBox.warning(self, "Camera Error", f"Could not access camera {self.selected_camera_index}. Please check if camera is connected and not being used by another application.")
-                    return
+                # Only IP camera is supported
+                QMessageBox.warning(self, "Camera Error", 
+                                  "USB cameras are not supported.\n\n"
+                                  "Please use IP Camera option (DroidCam or RTSP stream).")
+                return
             
             # Set camera properties for better performance
             self.webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -2478,76 +2505,8 @@ class PlateDetectorDashboard(QWidget):
             'backend': 'HTTP/RTSP'
         })
         
-        # Suppress OpenCV warnings during camera detection
-        # Save original stderr
-        original_stderr = sys.stderr
-        
-        try:
-            # Redirect stderr to null to suppress OpenCV warnings
-            sys.stderr = open(os.devnull, 'w')
-            
-            # Test camera indices 0-5 for regular cameras
-            for i in range(6):
-                try:
-                    camera_found = False
-                    camera_info = None
-                    
-                    backends = [
-                        (cv2.CAP_DSHOW, "DSHOW"),
-                        (-1, "DEFAULT")
-                    ]
-                    
-                    for backend_id, backend_name in backends:
-                        try:
-                            if backend_id == -1:
-                                cap = cv2.VideoCapture(i)
-                            else:
-                                cap = cv2.VideoCapture(i, backend_id)
-                            
-                            if cap.isOpened():
-                                ret, frame = cap.read()
-                                if ret and frame is not None:
-                                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                                    fps = int(cap.get(cv2.CAP_PROP_FPS))
-                                    
-                                    camera_info = {
-                                        'index': i,
-                                        'name': f"Camera {i} (Built-in)" if i == 0 else f"Camera {i}",
-                                        'resolution': f"{width}x{height}",
-                                        'fps': fps,
-                                        'backend': backend_name
-                                    }
-                                    
-                                    camera_found = True
-                                    break
-                            
-                            cap.release()
-                            
-                        except Exception:
-                            if 'cap' in locals():
-                                cap.release()
-                            continue
-                    
-                    if camera_found and camera_info:
-                        self.available_cameras.append(camera_info)
-                        
-                except Exception:
-                    continue
-        
-        finally:
-            # Restore original stderr
-            sys.stderr.close()
-            sys.stderr = original_stderr
-        
-        # Print results after restoring stderr
-        for cam in self.available_cameras:
-            if cam['index'] != 'ip_camera':
-                print(f"Found camera {cam['index']}: {cam['name']} - {cam['resolution']} @ {cam['fps']}fps ({cam['backend']})")
-        
-        if len(self.available_cameras) == 1:  # Only IP camera option
-            print("No local cameras detected, IP camera option available")
-        
+        # USB cameras are not supported - only IP camera option available
+        print("USB camera detection disabled. Only IP camera (DroidCam/RTSP) is supported.")
         print(f"Camera detection complete. Found {len(self.available_cameras)} camera option(s).")
     
     def get_droidcam_device_names(self):
