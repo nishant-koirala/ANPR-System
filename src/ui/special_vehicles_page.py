@@ -837,6 +837,7 @@ class SpecialVehiclesPage(QWidget):
                 enable_dashboard_alert=data.get('enable_dashboard_alert', True),
                 enable_email_alert=data.get('enable_email_alert', True),
                 enable_sound_alert=data.get('enable_sound_alert', True),
+                email_recipients=data.get('email_recipients'),
                 created_by=user_id
             )
             
@@ -919,7 +920,6 @@ class SpecialVehiclesPage(QWidget):
         archive_action = menu.addAction("📦 Archive")
         menu.addSeparator()
         delete_action = menu.addAction("🗑️ Delete")
-        delete_action.setStyleSheet("QAction { color: #e74c3c; }")
         
         action = menu.exec_(self.stolen_table.viewport().mapToGlobal(position))
         
@@ -960,7 +960,6 @@ class SpecialVehiclesPage(QWidget):
         extend_action = menu.addAction("📅 Extend Validity")
         menu.addSeparator()
         delete_action = menu.addAction("🗑️ Delete")
-        delete_action.setStyleSheet("QAction { color: #e74c3c; }")
         
         action = menu.exec_(self.staff_table.viewport().mapToGlobal(position))
         
@@ -1021,7 +1020,92 @@ class SpecialVehiclesPage(QWidget):
     
     def edit_stolen_vehicle(self):
         """Edit stolen vehicle"""
-        QMessageBox.information(self, "Coming Soon", "Edit functionality will be implemented soon!")
+        if self.stolen_table.rowCount() == 0:
+            return
+        
+        current_row = self.stolen_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "No Selection", "Please select a stolen vehicle to edit")
+            return
+        
+        try:
+            # Get vehicle ID from table
+            vehicle_id = int(self.stolen_table.item(current_row, 0).text())
+            
+            # Get vehicle data from database
+            vehicle = self.special_db.get_stolen_vehicle_by_id(vehicle_id)
+            if not vehicle:
+                QMessageBox.warning(self, "Error", "Vehicle not found")
+                return
+            
+            # Prepare vehicle data for dialog
+            vehicle_data = {
+                'id': vehicle.id,
+                'plate_number': vehicle.plate_number,
+                'owner_name': vehicle.owner_name or '',
+                'vehicle_type': vehicle.vehicle_type or 'Car',
+                'vehicle_color': vehicle.vehicle_color or '',
+                'contact_number': vehicle.contact_number or '',
+                'notes': vehicle.notes or '',
+                'reported_date': vehicle.reported_date,
+                'enable_dashboard_alert': vehicle.enable_dashboard_alert,
+                'enable_email_alert': vehicle.enable_email_alert,
+                'enable_sound_alert': vehicle.enable_sound_alert,
+                'email_recipients': vehicle.email_recipients or ''
+            }
+            
+            # Show edit dialog
+            dialog = EditStolenVehicleDialog(vehicle_data, self)
+            if dialog.exec_() == QDialog.Accepted:
+                data = dialog.get_data()
+                self.update_stolen_vehicle(vehicle_id, data)
+                
+        except Exception as e:
+            print(f"Error editing stolen vehicle: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to edit stolen vehicle: {e}")
+    
+    def update_stolen_vehicle(self, vehicle_id, data):
+        """Update stolen vehicle in database"""
+        if not self.special_db:
+            QMessageBox.warning(self, "Error", "Database not initialized")
+            return
+        
+        try:
+            # Get current user ID
+            user_id = None
+            if self.rbac_controller and hasattr(self.rbac_controller, 'auth_manager'):
+                user_id = self.rbac_controller.get_current_user_id()
+            
+            success = self.special_db.update_stolen_vehicle(
+                vehicle_id=vehicle_id,
+                plate_number=data['plate_number'],
+                owner_name=data.get('owner_name'),
+                vehicle_type=data.get('vehicle_type'),
+                vehicle_color=data.get('vehicle_color'),
+                contact_number=data.get('contact_number'),
+                notes=data.get('notes'),
+                reported_date=data['reported_date'],
+                enable_dashboard_alert=data.get('enable_dashboard_alert', True),
+                enable_email_alert=data.get('enable_email_alert', True),
+                enable_sound_alert=data.get('enable_sound_alert', True),
+                email_recipients=data.get('email_recipients'),
+                updated_by=user_id
+            )
+            
+            if success:
+                QMessageBox.information(self, "Success", f"Stolen vehicle '{data['plate_number']}' updated successfully!")
+                self.load_stolen_vehicles()
+                self.load_statistics()
+            else:
+                QMessageBox.warning(self, "Error", "Failed to update stolen vehicle")
+                
+        except Exception as e:
+            print(f"Error updating stolen vehicle: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to update stolen vehicle: {e}")
     
     def edit_staff_vehicle(self):
         """Edit staff vehicle"""
@@ -1200,6 +1284,10 @@ class AddStolenVehicleDialog(QDialog):
         self.email_alert_check = QCheckBox("Enable Email Alert")
         self.email_alert_check.setChecked(True)
         
+        self.email_recipients_input = QTextEdit()
+        self.email_recipients_input.setPlaceholderText("Enter email addresses (one per line or comma-separated)\ne.g.:\npolice@example.com\nsecurity@example.com")
+        self.email_recipients_input.setMaximumHeight(80)
+        
         self.sound_alert_check = QCheckBox("Enable Sound Alert")
         self.sound_alert_check.setChecked(True)
         
@@ -1212,6 +1300,7 @@ class AddStolenVehicleDialog(QDialog):
         form_layout.addRow("Notes:", self.notes_input)
         form_layout.addRow("", self.dashboard_alert_check)
         form_layout.addRow("", self.email_alert_check)
+        form_layout.addRow("Email Recipients:", self.email_recipients_input)
         form_layout.addRow("", self.sound_alert_check)
         
         layout.addLayout(form_layout)
@@ -1239,7 +1328,138 @@ class AddStolenVehicleDialog(QDialog):
             'reported_date': self.reported_date.date().toPyDate(),
             'enable_dashboard_alert': self.dashboard_alert_check.isChecked(),
             'enable_email_alert': self.email_alert_check.isChecked(),
-            'enable_sound_alert': self.sound_alert_check.isChecked()
+            'enable_sound_alert': self.sound_alert_check.isChecked(),
+            'email_recipients': self.email_recipients_input.toPlainText().strip()
+        }
+
+
+class EditStolenVehicleDialog(QDialog):
+    """Dialog for editing stolen vehicle"""
+    
+    def __init__(self, vehicle_data, parent=None):
+        super().__init__(parent)
+        self.vehicle_data = vehicle_data
+        self.setWindowTitle("Edit Stolen Vehicle")
+        self.setModal(True)
+        self.resize(500, 650)
+        self.init_ui()
+        self.load_data()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Form
+        form_layout = QFormLayout()
+        
+        self.plate_input = QLineEdit()
+        self.plate_input.setPlaceholderText("e.g., BA 1 PA 1234")
+        
+        self.owner_input = QLineEdit()
+        self.owner_input.setPlaceholderText("Owner's full name")
+        
+        self.vehicle_type_combo = QComboBox()
+        self.vehicle_type_combo.addItems(["Car", "Motorcycle", "Truck", "Van", "SUV", "Bus", "Other"])
+        
+        self.color_input = QLineEdit()
+        self.color_input.setPlaceholderText("e.g., Red, Blue, White")
+        
+        self.contact_input = QLineEdit()
+        self.contact_input.setPlaceholderText("Contact number")
+        
+        self.reported_date = QDateEdit()
+        self.reported_date.setDate(QDate.currentDate())
+        self.reported_date.setCalendarPopup(True)
+        
+        self.notes_input = QTextEdit()
+        self.notes_input.setPlaceholderText("Additional notes or description...")
+        self.notes_input.setMaximumHeight(100)
+        
+        # Alert settings
+        self.dashboard_alert_check = QCheckBox("Enable Dashboard Alert")
+        self.dashboard_alert_check.setChecked(True)
+        
+        self.email_alert_check = QCheckBox("Enable Email Alert")
+        self.email_alert_check.setChecked(True)
+        
+        self.email_recipients_input = QTextEdit()
+        self.email_recipients_input.setPlaceholderText("Enter email addresses (one per line or comma-separated)\ne.g.:\nnarutouj16@gmail.com\npolice@example.com")
+        self.email_recipients_input.setMaximumHeight(80)
+        
+        self.sound_alert_check = QCheckBox("Enable Sound Alert")
+        self.sound_alert_check.setChecked(True)
+        
+        form_layout.addRow("Plate Number:*", self.plate_input)
+        form_layout.addRow("Owner Name:", self.owner_input)
+        form_layout.addRow("Vehicle Type:", self.vehicle_type_combo)
+        form_layout.addRow("Color:", self.color_input)
+        form_layout.addRow("Contact Number:", self.contact_input)
+        form_layout.addRow("Reported Date:*", self.reported_date)
+        form_layout.addRow("Notes:", self.notes_input)
+        form_layout.addRow("", self.dashboard_alert_check)
+        form_layout.addRow("", self.email_alert_check)
+        form_layout.addRow("Email Recipients:", self.email_recipients_input)
+        form_layout.addRow("", self.sound_alert_check)
+        
+        layout.addLayout(form_layout)
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.validate_and_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def load_data(self):
+        """Load existing vehicle data into form"""
+        self.plate_input.setText(self.vehicle_data.get('plate_number', ''))
+        self.owner_input.setText(self.vehicle_data.get('owner_name', ''))
+        
+        # Set vehicle type
+        vehicle_type = self.vehicle_data.get('vehicle_type', 'Car')
+        index = self.vehicle_type_combo.findText(vehicle_type)
+        if index >= 0:
+            self.vehicle_type_combo.setCurrentIndex(index)
+        
+        self.color_input.setText(self.vehicle_data.get('vehicle_color', ''))
+        self.contact_input.setText(self.vehicle_data.get('contact_number', ''))
+        
+        # Set reported date
+        if self.vehicle_data.get('reported_date'):
+            from datetime import datetime
+            if isinstance(self.vehicle_data['reported_date'], str):
+                date_obj = datetime.strptime(self.vehicle_data['reported_date'], '%Y-%m-%d').date()
+            else:
+                date_obj = self.vehicle_data['reported_date']
+            self.reported_date.setDate(QDate(date_obj.year, date_obj.month, date_obj.day))
+        
+        self.notes_input.setPlainText(self.vehicle_data.get('notes', ''))
+        
+        # Set alert checkboxes
+        self.dashboard_alert_check.setChecked(self.vehicle_data.get('enable_dashboard_alert', True))
+        self.email_alert_check.setChecked(self.vehicle_data.get('enable_email_alert', True))
+        self.sound_alert_check.setChecked(self.vehicle_data.get('enable_sound_alert', True))
+        
+        # Set email recipients
+        self.email_recipients_input.setPlainText(self.vehicle_data.get('email_recipients', ''))
+    
+    def validate_and_accept(self):
+        if not self.plate_input.text().strip():
+            QMessageBox.warning(self, "Validation Error", "Plate number is required!")
+            return
+        self.accept()
+    
+    def get_data(self):
+        return {
+            'plate_number': self.plate_input.text().strip().upper(),
+            'owner_name': self.owner_input.text().strip(),
+            'vehicle_type': self.vehicle_type_combo.currentText(),
+            'vehicle_color': self.color_input.text().strip(),
+            'contact_number': self.contact_input.text().strip(),
+            'notes': self.notes_input.toPlainText().strip(),
+            'reported_date': self.reported_date.date().toPyDate(),
+            'enable_dashboard_alert': self.dashboard_alert_check.isChecked(),
+            'enable_email_alert': self.email_alert_check.isChecked(),
+            'enable_sound_alert': self.sound_alert_check.isChecked(),
+            'email_recipients': self.email_recipients_input.toPlainText().strip()
         }
 
 

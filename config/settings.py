@@ -151,3 +151,18 @@ DEBUG_OCR_VERBOSE = True  # Set to True only for debugging OCR issues (TEMPORARI
 # Hourly rate for parking fee calculation (in NPR)
 PARKING_HOURLY_RATE = 50.0  # 50 NPR per hour
 MINIMUM_CHARGE_HOURS = 1.0  # Minimum charge for 1 hour even for shorter durations
+
+# ===== Email Alert Settings =====
+# Gmail SMTP configuration for stolen vehicle alerts
+EMAIL_ENABLED = True
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587  # TLS port
+SMTP_USE_TLS = True
+
+# Sender email credentials
+EMAIL_SENDER = "nishantkoirala16@gmail.com"
+EMAIL_APP_PASSWORD = "sgvc qzdh yfym kjtq"  # Gmail app password (not regular password)
+
+# Email settings
+EMAIL_FROM_NAME = "NEPALI ANPR System"
+EMAIL_SUBJECT_PREFIX = "🚨 STOLEN VEHICLE ALERT"

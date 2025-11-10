@@ -31,6 +31,7 @@ class SpecialVehiclesDB:
                           enable_dashboard_alert: bool = True,
                           enable_email_alert: bool = True,
                           enable_sound_alert: bool = True,
+                          email_recipients: str = None,
                           created_by: int = None) -> Optional[StolenVehicle]:
         """
         Add a new stolen vehicle
@@ -46,6 +47,7 @@ class SpecialVehiclesDB:
             enable_dashboard_alert: Enable dashboard alerts
             enable_email_alert: Enable email alerts
             enable_sound_alert: Enable sound alerts
+            email_recipients: Email addresses for alerts (comma or newline separated)
             created_by: User ID who created the record
             
         Returns:
@@ -69,6 +71,7 @@ class SpecialVehiclesDB:
                 enable_dashboard_alert=enable_dashboard_alert,
                 enable_email_alert=enable_email_alert,
                 enable_sound_alert=enable_sound_alert,
+                email_recipients=email_recipients,
                 status='Active',
                 created_by=created_by
             )
@@ -82,6 +85,14 @@ class SpecialVehiclesDB:
             
             print(f"Added stolen vehicle: {plate_number}")
             return stolen_vehicle
+    
+    def get_stolen_vehicle_by_id(self, vehicle_id: int) -> Optional[StolenVehicle]:
+        """Get stolen vehicle by ID"""
+        with self.session_factory() as session:
+            vehicle = session.query(StolenVehicle).filter_by(id=vehicle_id).first()
+            if vehicle:
+                session.expunge(vehicle)
+            return vehicle
     
     def get_stolen_vehicle_by_plate(self, plate_number: str) -> Optional[StolenVehicle]:
         """Get stolen vehicle by plate number"""
@@ -268,6 +279,14 @@ class SpecialVehiclesDB:
             
             print(f"Added staff vehicle: {plate_number} for {staff_name}")
             return staff_vehicle
+    def get_staff_vehicle_by_id(self, vehicle_id: int) -> Optional[StaffVehicle]:
+        """Get staff vehicle by ID"""
+        with self.session_factory() as session:
+            vehicle = session.query(StaffVehicle).filter_by(id=vehicle_id).first()
+            if vehicle:
+                session.expunge(vehicle)
+            return vehicle
+    
     def get_staff_vehicle_by_plate(self, plate_number: str) -> Optional[StaffVehicle]:
         """Get staff vehicle by plate number"""
         with self.session_factory() as session:

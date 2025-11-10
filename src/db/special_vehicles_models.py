@@ -30,6 +30,7 @@ class StolenVehicle(Base):
     enable_dashboard_alert = Column(Boolean, default=True)
     enable_email_alert = Column(Boolean, default=True)
     enable_sound_alert = Column(Boolean, default=True)
+    email_recipients = Column(Text)  # Email addresses (one per line or comma-separated)
     
     # Timestamps and audit
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

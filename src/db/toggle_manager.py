@@ -5,15 +5,25 @@ Handles the logic for determining ENTRY/EXIT toggle states based on vehicle dete
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from difflib import SequenceMatcher
+from typing import Dict, Any, Optional
 from enum import Enum
-import difflib
 
-from .database import Database, get_database
-from .models import ToggleMode, VehicleLog
-from .special_vehicles_db import SpecialVehiclesDB
+from src.db.database import Database
+from src.db.models import VehicleLog, ToggleMode
+from src.db.special_vehicles_db import SpecialVehiclesDB
 
 logger = logging.getLogger(__name__)
+
+# Email alert imports
+try:
+    from src.alerts.email_sender import EmailAlertSender
+    from config.settings import (EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT,
+                                 EMAIL_SENDER, EMAIL_APP_PASSWORD)
+    EMAIL_AVAILABLE = True
+except ImportError:
+    EMAIL_AVAILABLE = False
+    logger.warning("Email alert system not available")
 
 
 class ToggleDecision(Enum):
@@ -53,6 +63,20 @@ class ToggleManager:
         except Exception as e:
             logger.warning(f"Special vehicles database not available: {e}")
             self.special_db = None
+        
+        # Initialize email alert sender
+        self.email_sender = None
+        if EMAIL_AVAILABLE and EMAIL_ENABLED:
+            try:
+                self.email_sender = EmailAlertSender(
+                    smtp_server=SMTP_SERVER,
+                    smtp_port=SMTP_PORT,
+                    sender_email=EMAIL_SENDER,
+                    sender_password=EMAIL_APP_PASSWORD
+                )
+                logger.info("✅ Email alert system initialized")
+            except Exception as e:
+                logger.warning(f"Could not initialize email sender: {e}")
         
         # Cache for recent detections to avoid database queries
         self._recent_detections: Dict[str, Dict[str, Any]] = {}
@@ -363,10 +387,90 @@ class ToggleManager:
                             'alert_id': alert.id,
                             'timestamp': datetime.utcnow()
                         }
+                        
+                        # Send email alert if enabled
+                        if stolen_vehicle.enable_email_alert and stolen_vehicle.email_recipients:
+                            self._send_email_alert(stolen_vehicle, plate_text, raw_log_id)
                 else:
                     logger.info(f"Stolen vehicle {plate_text} detected but alert in cooldown period")
         except Exception as e:
             logger.error(f"Error checking stolen vehicle: {e}")
+    
+    def _send_email_alert(self, stolen_vehicle, plate_text: str, raw_log_id: int):
+        """
+        Send email alert for stolen vehicle detection
+        
+        Args:
+            stolen_vehicle: StolenVehicle object
+            plate_text: Detected plate number
+            raw_log_id: Raw log ID
+        """
+        if not self.email_sender:
+            logger.debug("Email sender not initialized")
+            return
+        
+        try:
+            # Parse email recipients (comma or newline separated)
+            recipients = []
+            if stolen_vehicle.email_recipients:
+                for email in stolen_vehicle.email_recipients.replace('\n', ',').split(','):
+                    email = email.strip()
+                    if email:
+                        recipients.append(email)
+            
+            if not recipients:
+                logger.warning("No email recipients configured for stolen vehicle")
+                return
+            
+            # Get plate image path if available
+            plate_image_path = None
+            try:
+                with self.db.get_session() as session:
+                    from src.db.models import RawLog
+                    raw_log = session.query(RawLog).filter(RawLog.raw_id == raw_log_id).first()
+                    if raw_log and raw_log.plate_image_path:
+                        plate_image_path = raw_log.plate_image_path
+            except Exception as img_error:
+                logger.debug(f"Could not get plate image: {img_error}")
+            
+            # Send email
+            success = self.email_sender.send_stolen_vehicle_alert(
+                plate_number=plate_text,
+                owner_name=stolen_vehicle.owner_name or 'Unknown',
+                vehicle_type=stolen_vehicle.vehicle_type or 'Unknown',
+                vehicle_color=stolen_vehicle.vehicle_color or 'Unknown',
+                reported_date=stolen_vehicle.reported_date.strftime('%Y-%m-%d') if stolen_vehicle.reported_date else 'Unknown',
+                detection_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                detection_location='Camera Detection',
+                recipients=recipients,
+                plate_image_path=plate_image_path
+            )
+            
+            if success:
+                logger.info(f"📧 Email alert sent to {len(recipients)} recipient(s)")
+                
+                # Update alert record with email sent status
+                try:
+                    with self.db.get_session() as session:
+                        from src.db.special_vehicles_models import StolenVehicleAlert
+                        alert = session.query(StolenVehicleAlert).filter(
+                            StolenVehicleAlert.stolen_vehicle_id == stolen_vehicle.id
+                        ).order_by(StolenVehicleAlert.detection_time.desc()).first()
+                        
+                        if alert:
+                            alert.alert_sent_email = True
+                            alert.email_recipients = ', '.join(recipients)
+                            alert.email_sent_at = datetime.utcnow()
+                            session.commit()
+                except Exception as update_error:
+                    logger.debug(f"Could not update alert record: {update_error}")
+            else:
+                logger.warning("Failed to send email alert")
+                
+        except Exception as e:
+            logger.error(f"Error sending email alert: {e}")
+            import traceback
+            traceback.print_exc()
     
     def get_and_clear_stolen_alert(self):
         """

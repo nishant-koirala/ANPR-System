@@ -1232,6 +1232,24 @@ class DatabasePage(QWidget):
                     )
                     
                     if alert:
+                        # Send email alert if enabled
+                        print(f"  📧 Checking email alert settings...")
+                        print(f"     enable_email_alert: {stolen_vehicle.enable_email_alert}")
+                        
+                        # Check if email_recipients attribute exists (for backward compatibility)
+                        email_recipients = getattr(stolen_vehicle, 'email_recipients', None)
+                        print(f"     email_recipients: {email_recipients or 'NOT SET'}")
+                        
+                        if stolen_vehicle.enable_email_alert and email_recipients:
+                            print(f"  📧 Sending email alert...")
+                            self._send_edit_email_alert(stolen_vehicle, new_plate, raw_ref)
+                        else:
+                            if not stolen_vehicle.enable_email_alert:
+                                print(f"  ⚠️  Email alert disabled for this vehicle")
+                            if not email_recipients:
+                                print(f"  ⚠️  No email recipients configured")
+                                print(f"  💡 Add email recipients via Special Vehicles page")
+                        
                         # Show critical alert
                         msg = QMessageBox(self)
                         msg.setIcon(QMessageBox.Critical)
@@ -1253,6 +1271,70 @@ class DatabasePage(QWidget):
                 
         except Exception as e:
             print(f"Error checking stolen vehicle: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _send_edit_email_alert(self, stolen_vehicle, new_plate: str, raw_ref: int):
+        """Send email alert for stolen vehicle detected after edit"""
+        try:
+            print(f"  📧 Initializing email alert system...")
+            
+            from src.alerts.email_sender import EmailAlertSender
+            from config.settings import (EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT,
+                                        EMAIL_SENDER, EMAIL_APP_PASSWORD)
+            
+            if not EMAIL_ENABLED:
+                print(f"  ⚠️  EMAIL_ENABLED is False in settings")
+                return
+            
+            # Parse recipients
+            recipients = []
+            email_recipients = getattr(stolen_vehicle, 'email_recipients', None)
+            
+            if email_recipients:
+                for email in email_recipients.replace('\n', ',').split(','):
+                    email = email.strip()
+                    if email:
+                        recipients.append(email)
+                print(f"  📧 Found {len(recipients)} recipient(s): {', '.join(recipients)}")
+            else:
+                print(f"  ⚠️  No email recipients found")
+                return
+            
+            if not recipients:
+                print(f"  ⚠️  No valid email recipients")
+                return
+            
+            # Initialize email sender
+            print(f"  📧 Connecting to SMTP server...")
+            email_sender = EmailAlertSender(
+                smtp_server=SMTP_SERVER,
+                smtp_port=SMTP_PORT,
+                sender_email=EMAIL_SENDER,
+                sender_password=EMAIL_APP_PASSWORD
+            )
+            
+            # Send email
+            print(f"  📧 Sending email to {len(recipients)} recipient(s)...")
+            success = email_sender.send_stolen_vehicle_alert(
+                plate_number=new_plate,
+                owner_name=stolen_vehicle.owner_name or 'Unknown',
+                vehicle_type=stolen_vehicle.vehicle_type or 'Unknown',
+                vehicle_color=stolen_vehicle.vehicle_color or 'Unknown',
+                reported_date=stolen_vehicle.reported_date.strftime('%Y-%m-%d') if stolen_vehicle.reported_date else 'Unknown',
+                detection_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                detection_location='Manual Edit Detection',
+                recipients=recipients
+            )
+            
+            if success:
+                print(f"  ✅ Email alert sent successfully to {len(recipients)} recipient(s)!")
+                print(f"     Recipients: {', '.join(recipients)}")
+            else:
+                print(f"  ❌ Failed to send email alert")
+            
+        except Exception as e:
+            print(f"  ❌ Error sending email alert: {e}")
             import traceback
             traceback.print_exc()
     

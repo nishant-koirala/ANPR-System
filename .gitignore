@@ -306,6 +306,14 @@ debug_stolen_check.py
 docs/SYSTEM_DOCUMENTATION.txt
 docs/SYSTEM_DOCUMENTATION.txt
 GIT_COMMIT_GUIDE.md
+ADD_EMAIL_RECIPIENTS_NOW.md
+CONTEXT_MENU_FIX.md
+EMAIL_ALERT_SYSTEM.md
+EMAIL_NOT_SENT_FIX.md
+QUICK_FIX_EMAIL.md
+diagnose_email.bat
+migrate_add_email_recipients.py
+verify_email_column.py
 # ==================== KEEP THESE ====================
 # Essential project files (explicitly keep)
 
