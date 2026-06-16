@@ -5,11 +5,15 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                            QTableWidgetItem, QPushButton, QLineEdit, QComboBox,
                            QLabel, QMessageBox, QDialog, QFormLayout, QCheckBox,
                            QGroupBox, QScrollArea, QFrame, QHeaderView, QRadioButton,
-                           QButtonGroup)
+                           QButtonGroup, QTabWidget)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 from datetime import datetime
 from ..auth.auth_manager import AuthManager, Permissions, Roles, AuthorizationError
+from .invite_user_dialog import InviteUserDialog
+from ..db.invitation_db import InvitationDB
+from ..alerts.invitation_email import InvitationEmailSender
+from config.settings import SMTP_SERVER, SMTP_PORT, EMAIL_SENDER, EMAIL_APP_PASSWORD
 
 # Import modern UI components
 try:
@@ -192,10 +196,10 @@ class UserManagementPage(QWidget):
         title_label.setFont(title_font)
         
         # Action buttons
-        self.create_user_btn = QPushButton("➕ Create User")
-        self.create_user_btn.setStyleSheet("""
+        self.invite_user_btn = QPushButton("📧 Invite User")
+        self.invite_user_btn.setStyleSheet("""
             QPushButton {
-                background-color: #28a745;
+                background-color: #667eea;
                 color: white;
                 border: none;
                 padding: 8px 16px;
@@ -203,7 +207,7 @@ class UserManagementPage(QWidget):
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #218838;
+                background-color: #5568d3;
             }
         """)
         
@@ -223,7 +227,7 @@ class UserManagementPage(QWidget):
         
         header_layout.addWidget(title_label)
         header_layout.addStretch()
-        header_layout.addWidget(self.create_user_btn)
+        header_layout.addWidget(self.invite_user_btn)
         header_layout.addWidget(self.refresh_btn)
         
         # Search/Filter section
@@ -283,7 +287,56 @@ class UserManagementPage(QWidget):
         header.setSectionResizeMode(7, QHeaderView.Fixed)             # Actions
         
         # Set minimum width for Actions column to show buttons properly
-        self.users_table.setColumnWidth(7, 200)  # Wide enough for Edit + Delete buttons
+        self.users_table.setColumnWidth(7, 250)  # Wide enough for Edit + Delete buttons with text
+        
+        # Invitations section (collapsible)
+        self.invitations_frame = QFrame()
+        invitations_layout = QVBoxLayout(self.invitations_frame)
+        invitations_layout.setContentsMargins(0, 10, 0, 0)
+        
+        # Toggle button for invitations
+        self.toggle_invitations_btn = QPushButton("▼ Show Sent Invitations")
+        self.toggle_invitations_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f8f9fa;
+                color: #212529;
+                border: 1px solid #dee2e6;
+                padding: 10px;
+                text-align: left;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+                color: #000000;
+            }
+        """)
+        self.toggle_invitations_btn.clicked.connect(self.toggle_invitations)
+        invitations_layout.addWidget(self.toggle_invitations_btn)
+        
+        # Invitations table (initially hidden)
+        self.invitations_table = QTableWidget()
+        self.invitations_table.setColumnCount(7)
+        self.invitations_table.setHorizontalHeaderLabels([
+            "Email", "Role", "Status", "Created", "Expires", "Completed By", "Actions"
+        ])
+        self.invitations_table.setAlternatingRowColors(True)
+        self.invitations_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.invitations_table.horizontalHeader().setStretchLastSection(True)
+        self.invitations_table.hide()  # Initially hidden
+        
+        # Resize invitation columns
+        inv_header = self.invitations_table.horizontalHeader()
+        inv_header.setSectionResizeMode(0, QHeaderView.Stretch)  # Email
+        inv_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Role
+        inv_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Status
+        inv_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Created
+        inv_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Expires
+        inv_header.setSectionResizeMode(5, QHeaderView.Stretch)  # Completed By
+        inv_header.setSectionResizeMode(6, QHeaderView.Fixed)  # Actions
+        self.invitations_table.setColumnWidth(6, 150)
+        
+        invitations_layout.addWidget(self.invitations_table)
         
         # Status bar
         self.status_label = QLabel("Ready")
@@ -293,12 +346,13 @@ class UserManagementPage(QWidget):
         layout.addLayout(header_layout)
         layout.addLayout(filter_layout)
         layout.addWidget(self.users_table)
+        layout.addWidget(self.invitations_frame)
         layout.addWidget(self.status_label)
         
         self.setLayout(layout)
         
         # Connect signals
-        self.create_user_btn.clicked.connect(self.create_user)
+        self.invite_user_btn.clicked.connect(self.invite_user)
         self.refresh_btn.clicked.connect(self.load_users)
         self.search_edit.textChanged.connect(self.filter_users)
         self.status_filter.currentTextChanged.connect(self.filter_users)
@@ -337,35 +391,71 @@ class UserManagementPage(QWidget):
                 return True
             except Exception as e:
                 print(f"DEBUG: Permission check error: {e}")
-                # For now, allow access if there's a session error
-                return True
+                return False
                 
         except Exception as e:
             print(f"DEBUG: General permission check error: {e}")
             return False
     
-    def create_user(self):
-        """Open create user dialog"""
-        print("DEBUG: Create user button clicked!")
+    def invite_user(self):
+        """Invite new user via email"""
+        print("📧 Invite user button clicked!")
         
         if not self.check_permissions():
-            print("DEBUG: Permission check failed")
+            print("⚠️ Permission check failed")
             return
         
-        print("DEBUG: Opening CreateUserDialog...")
         try:
-            dialog = CreateUserDialog(self.auth_manager, self)
-            print("DEBUG: Dialog created successfully")
-            result = dialog.exec_()
-            print(f"DEBUG: Dialog result: {result}")
-            if result == QDialog.Accepted:
-                print("DEBUG: Dialog accepted, reloading users...")
-                self.load_users()
+            # Get current user ID
+            current_user_id = None
+            if self.auth_manager.current_username:
+                user = self.auth_manager.get_user_by_username(self.auth_manager.current_username)
+                if user:
+                    current_user_id = user.user_id
+            
+            # Initialize invitation system if not already done
+            if not hasattr(self, 'invitation_db'):
+                self.invitation_db = InvitationDB(self.auth_manager.get_session)
+            if not hasattr(self, 'email_sender'):
+                self.email_sender = InvitationEmailSender(
+                    SMTP_SERVER, SMTP_PORT,
+                    EMAIL_SENDER, EMAIL_APP_PASSWORD
+                )
+            
+            # Open invite dialog
+            dialog = InviteUserDialog(
+                self.invitation_db,
+                self.email_sender,
+                current_user_id,
+                self
+            )
+            
+            # Connect signal
+            dialog.invitation_sent.connect(self.on_invitation_sent)
+            
+            dialog.exec_()
+            
         except Exception as e:
-            print(f"DEBUG: Exception creating dialog: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open invitation dialog:\n{str(e)}"
+            )
+            print(f"❌ Invite user error: {e}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to open user creation dialog: {str(e)}")
+    
+    def on_invitation_sent(self, email, role):
+        """Handle invitation sent signal"""
+        print(f"✅ Invitation sent to {email} as {role}")
+        QMessageBox.information(
+            self,
+            "Invitation Sent",
+            f"Invitation successfully sent to:\n{email}\n\nRole: {role.capitalize()}\n\n⏱️ OTP expires in 5 minutes!"
+        )
+        # Refresh invitations if visible
+        if self.invitations_table.isVisible():
+            self.load_invitations()
     
     def load_users(self):
         """Load users from database"""
@@ -640,3 +730,143 @@ class UserManagementPage(QWidget):
                         QMessageBox.warning(self, "Error", "User not found")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to delete user: {str(e)}")
+    
+    def toggle_invitations(self):
+        """Toggle invitations table visibility"""
+        if self.invitations_table.isVisible():
+            self.invitations_table.hide()
+            self.toggle_invitations_btn.setText("▼ Show Sent Invitations")
+        else:
+            self.invitations_table.show()
+            self.toggle_invitations_btn.setText("▲ Hide Sent Invitations")
+            self.load_invitations()
+    
+    def load_invitations(self):
+        """Load all sent invitations"""
+        try:
+            # Initialize invitation_db if not already done
+            if not hasattr(self, 'invitation_db'):
+                self.invitation_db = InvitationDB(self.auth_manager.get_session)
+            
+            # Get all invitations
+            invitations = self.invitation_db.get_all_invitations(limit=100)
+            
+            # Clear table
+            self.invitations_table.setRowCount(0)
+            
+            # Populate table
+            for inv in invitations:
+                row = self.invitations_table.rowCount()
+                self.invitations_table.insertRow(row)
+                
+                # Email
+                self.invitations_table.setItem(row, 0, QTableWidgetItem(inv.email))
+                
+                # Role
+                role_item = QTableWidgetItem(inv.role.capitalize())
+                self.invitations_table.setItem(row, 1, role_item)
+                
+                # Status with color
+                status_item = QTableWidgetItem(inv.status.upper())
+                if inv.status == 'pending':
+                    status_item.setForeground(Qt.darkYellow)
+                elif inv.status == 'verified':
+                    status_item.setForeground(Qt.blue)
+                elif inv.status == 'completed':
+                    status_item.setForeground(Qt.darkGreen)
+                elif inv.status == 'expired':
+                    status_item.setForeground(Qt.red)
+                else:  # revoked
+                    status_item.setForeground(Qt.gray)
+                self.invitations_table.setItem(row, 2, status_item)
+                
+                # Created
+                created_str = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else ""
+                self.invitations_table.setItem(row, 3, QTableWidgetItem(created_str))
+                
+                # Expires (show time remaining)
+                if inv.expires_at:
+                    from datetime import datetime
+                    now = datetime.utcnow()
+                    if now < inv.expires_at:
+                        delta = inv.expires_at - now
+                        minutes = int(delta.total_seconds() / 60)
+                        if minutes < 60:
+                            expires_str = f"{minutes}m left"
+                        else:
+                            hours = int(minutes / 60)
+                            expires_str = f"{hours}h left"
+                    else:
+                        expires_str = "Expired"
+                else:
+                    expires_str = ""
+                self.invitations_table.setItem(row, 4, QTableWidgetItem(expires_str))
+                
+                # Completed By
+                completed_by = inv.completed_by_username or ""
+                self.invitations_table.setItem(row, 5, QTableWidgetItem(completed_by))
+                
+                # Actions
+                actions_widget = QWidget()
+                actions_layout = QHBoxLayout(actions_widget)
+                actions_layout.setContentsMargins(4, 2, 4, 2)
+                
+                if inv.status == 'pending':
+                    # Revoke button for pending invitations
+                    revoke_btn = QPushButton("Revoke")
+                    revoke_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #dc3545;
+                            color: white;
+                            border: none;
+                            padding: 4px 8px;
+                            border-radius: 3px;
+                        }
+                        QPushButton:hover {
+                            background-color: #c82333;
+                        }
+                    """)
+                    revoke_btn.clicked.connect(lambda checked, inv_id=inv.id: self.revoke_invitation(inv_id))
+                    actions_layout.addWidget(revoke_btn)
+                
+                self.invitations_table.setCellWidget(row, 6, actions_widget)
+            
+            # Update button text with count
+            pending_count = sum(1 for inv in invitations if inv.status == 'pending')
+            if self.invitations_table.isVisible():
+                self.toggle_invitations_btn.setText(f"▲ Hide Sent Invitations ({len(invitations)} total, {pending_count} pending)")
+            else:
+                self.toggle_invitations_btn.setText(f"▼ Show Sent Invitations ({len(invitations)} total, {pending_count} pending)")
+            
+            print(f"✅ Loaded {len(invitations)} invitations ({pending_count} pending)")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load invitations:\n{str(e)}")
+            print(f"❌ Error loading invitations: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def revoke_invitation(self, invitation_id):
+        """Revoke a pending invitation"""
+        reply = QMessageBox.question(
+            self,
+            "Revoke Invitation",
+            "Are you sure you want to revoke this invitation?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                if not hasattr(self, 'invitation_db'):
+                    self.invitation_db = InvitationDB(self.auth_manager.get_session)
+                
+                success = self.invitation_db.revoke_invitation(invitation_id)
+                
+                if success:
+                    QMessageBox.information(self, "Success", "Invitation revoked successfully")
+                    self.load_invitations()
+                else:
+                    QMessageBox.warning(self, "Failed", "Could not revoke invitation")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to revoke invitation:\n{str(e)}")
