@@ -548,8 +548,8 @@ class FrameWorker(QObject):
                     try:
                         # Generate a temporary raw_id for image naming (will be replaced with actual DB ID)
                         temp_raw_id = f"{sort_id}_{frame_counter}_{int(time.time())}"
-                        image_result = self.image_processor.save_plate_images(
-                            frame=task.get('full_frame'),  # Need full frame for context
+                        image_result = self.image_processor.save_temp_plate_image(
+                            frame=task.get('full_frame'),
                             bbox=abs_bbox,
                             plate_text=text,
                             timestamp=datetime.now(),
