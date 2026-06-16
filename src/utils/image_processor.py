@@ -9,24 +9,25 @@ import cv2
 import numpy as np
 from datetime import datetime
 from PIL import Image
-import hashlib
 
 class PlateImageProcessor:
     """Handles plate image processing and storage"""
-    
+
     def __init__(self, base_storage_path="plate_images"):
-        """
-        Initialize the image processor
-        
-        Args:
-            base_storage_path: Base directory for storing plate images
-        """
         self.base_storage_path = base_storage_path
-        self.thumbnail_size = (150, 50)  # Standard thumbnail size
-        
-        # Create storage directories
+        self.thumbnail_size = (150, 50)
+        self._temp_dir = None  # set via set_temp_dir() before first detection
+        # Create CLAHE once and reuse — cv2.createCLAHE() allocation is not free
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # Cache the last daily directory to avoid os.makedirs on every save
+        self._last_daily_dir = None
         self.setup_storage_directories()
-    
+
+    def set_temp_dir(self, path):
+        """Point the processor at the session temp directory for candidate images."""
+        self._temp_dir = path
+        os.makedirs(path, exist_ok=True)
+
     def setup_storage_directories(self):
         """Create necessary storage directories"""
         directories = [
@@ -35,377 +36,280 @@ class PlateImageProcessor:
             os.path.join(self.base_storage_path, "thumbnails"),
             os.path.join(self.base_storage_path, "daily")
         ]
-        
         for directory in directories:
             os.makedirs(directory, exist_ok=True)
-    
+
     def crop_plate_from_frame(self, frame, bbox):
         """
-        Crop plate region from full frame
-        
+        Crop plate region from full frame.
+
         Args:
             frame: Full frame image (numpy array)
-            bbox: Bounding box - can be [x1, y1, x2, y2] or [x, y, width, height]
-            
+            bbox: Bounding box — [x1, y1, x2, y2] or [x, y, width, height]
+
         Returns:
-            Cropped plate image (numpy array)
+            Cropped plate image (numpy array) or None
         """
         try:
-            if frame is None:
-                print("DEBUG: Frame is None in crop_plate_from_frame")
+            if frame is None or bbox is None or len(bbox) != 4:
                 return None
-            
-            if bbox is None or len(bbox) != 4:
-                print(f"DEBUG: Invalid bbox: {bbox}")
-                return None
-            
-            # Handle both bbox formats: [x1, y1, x2, y2] and [x, y, width, height]
+
             x1, y1, x2_or_w, y2_or_h = bbox
-            
-            # Detect format and convert to x1, y1, x2, y2
+
+            # Detect format and normalise to x1, y1, x2, y2
             if x2_or_w > frame.shape[1] or y2_or_h > frame.shape[0] or x2_or_w < x1 or y2_or_h < y1:
-                # Likely [x, y, width, height] format
                 x1, y1, width, height = bbox
                 x2, y2 = x1 + width, y1 + height
-                print(f"DEBUG: Detected [x, y, w, h] format: ({x1}, {y1}, {width}, {height})")
             else:
-                # Likely [x1, y1, x2, y2] format
                 x2, y2 = x2_or_w, y2_or_h
-                print(f"DEBUG: Detected [x1, y1, x2, y2] format: ({x1}, {y1}, {x2}, {y2})")
-            
-            # Validate coordinates
+
             if x2 <= x1 or y2 <= y1:
-                print(f"DEBUG: Invalid bbox coordinates: ({x1}, {y1}, {x2}, {y2})")
                 return None
-            
-            # Add some padding around the plate
+
             padding = 5
             x_start = max(0, int(x1 - padding))
             y_start = max(0, int(y1 - padding))
-            x_end = min(frame.shape[1], int(x2 + padding))
-            y_end = min(frame.shape[0], int(y2 + padding))
-            
-            # Validate crop coordinates
+            x_end   = min(frame.shape[1], int(x2 + padding))
+            y_end   = min(frame.shape[0], int(y2 + padding))
+
             if x_start >= x_end or y_start >= y_end:
-                print(f"DEBUG: Invalid crop coordinates: ({x_start}, {y_start}) to ({x_end}, {y_end})")
                 return None
-            
-            # Crop the plate region
+
             plate_crop = frame[y_start:y_end, x_start:x_end]
-            
-            # Ensure we have a valid crop
-            if plate_crop.size == 0:
-                print("DEBUG: Cropped plate has zero size")
-                return None
-                
-            print(f"DEBUG: Successfully cropped plate: {plate_crop.shape}")
-            return plate_crop
-            
-        except Exception as e:
-            print(f"DEBUG: Error in crop_plate_from_frame: {e}")
+            return plate_crop if plate_crop.size > 0 else None
+
+        except Exception:
             return None
-    
+
     def enhance_plate_image(self, plate_image):
         """
-        Enhance plate image for better OCR
-        
+        Enhance plate image contrast and reduce noise.
+
         Args:
             plate_image: Cropped plate image
-            
+
         Returns:
             Enhanced plate image
         """
         if plate_image is None or plate_image.size == 0:
             return None
-            
+
         try:
-            # Convert to grayscale if needed
-            if len(plate_image.shape) == 3:
-                gray = cv2.cvtColor(plate_image, cv2.COLOR_BGR2GRAY)
-            else:
-                gray = plate_image.copy()
-            
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(gray)
-            
-            # Apply bilateral filter to reduce noise while keeping edges sharp
-            filtered = cv2.bilateralFilter(enhanced, 9, 75, 75)
-            
-            # Convert back to BGR for consistency
-            if len(plate_image.shape) == 3:
-                enhanced_bgr = cv2.cvtColor(filtered, cv2.COLOR_GRAY2BGR)
-            else:
-                enhanced_bgr = filtered
-            
-            return enhanced_bgr
+            gray = cv2.cvtColor(plate_image, cv2.COLOR_BGR2GRAY) \
+                   if len(plate_image.shape) == 3 else plate_image.copy()
+
+            enhanced = self._clahe.apply(gray)
+
+            # d=5 is 3× faster than d=9 (O(d²)) with no perceptible quality loss
+            # on small plate crops
+            filtered = cv2.bilateralFilter(enhanced, 5, 75, 75)
+
+            return cv2.cvtColor(filtered, cv2.COLOR_GRAY2BGR) \
+                   if len(plate_image.shape) == 3 else filtered
+
         except Exception as e:
             print(f"Error enhancing plate image: {e}")
-            return plate_image  # Return original if enhancement fails
-    
+            return plate_image
+
     def create_thumbnail(self, plate_image):
         """
-        Create thumbnail from plate image
-        
+        Create thumbnail image from plate image.
+
         Args:
-            plate_image: Full plate image
-            
+            plate_image: Plate image to thumbnail
+
         Returns:
             Thumbnail image
         """
         if plate_image is None or plate_image.size == 0:
             return None
-            
+
         try:
-            # Convert to PIL Image for better resizing
             if len(plate_image.shape) == 3:
                 pil_image = Image.fromarray(cv2.cvtColor(plate_image, cv2.COLOR_BGR2RGB))
             else:
                 pil_image = Image.fromarray(plate_image)
-        
-            # Create thumbnail maintaining aspect ratio
+
             pil_image.thumbnail(self.thumbnail_size, Image.Resampling.LANCZOS)
-            
-            # Convert back to OpenCV format
+
             thumbnail_array = np.array(pil_image)
-            if len(thumbnail_array.shape) == 3:
-                thumbnail_cv = cv2.cvtColor(thumbnail_array, cv2.COLOR_RGB2BGR)
-            else:
-                thumbnail_cv = thumbnail_array
-            
-            return thumbnail_cv
+            return cv2.cvtColor(thumbnail_array, cv2.COLOR_RGB2BGR) \
+                   if len(thumbnail_array.shape) == 3 else thumbnail_array
+
         except Exception as e:
             print(f"Error creating thumbnail: {e}")
-            return plate_image  # Return original if thumbnail creation fails
-    
+            return plate_image
+
     def generate_filename(self, plate_text, timestamp, raw_id):
-        """
-        Generate unique filename for plate image
-        
-        Args:
-            plate_text: Detected plate text
-            timestamp: Detection timestamp
-            raw_id: Raw log ID for uniqueness
-            
-        Returns:
-            Unique filename
-        """
-        # Clean plate text for filename
+        """Generate unique filename for a plate image."""
         clean_plate = "".join(c for c in plate_text if c.isalnum()).upper()
-        
-        # Generate timestamp string
         time_str = timestamp.strftime("%Y%m%d_%H%M%S")
-        
-        # Create unique identifier
-        unique_str = f"{clean_plate}_{time_str}_{raw_id}"
-        hash_suffix = hashlib.md5(unique_str.encode()).hexdigest()[:8]
-        
-        return f"{clean_plate}_{time_str}_{hash_suffix}"
-    
+        # 4 random bytes → 8 hex chars, faster than MD5 and equally unique
+        unique_suffix = os.urandom(4).hex()
+        return f"{clean_plate}_{time_str}_{unique_suffix}"
+
+    def _get_daily_dir(self, base_path, timestamp):
+        """Return the daily storage directory, creating it only when the date changes."""
+        daily_dir = os.path.join(base_path, "daily", timestamp.strftime("%Y-%m-%d"))
+        if daily_dir != self._last_daily_dir:
+            os.makedirs(daily_dir, exist_ok=True)
+            self._last_daily_dir = daily_dir
+        return daily_dir
+
     def save_plate_images(self, frame, bbox, plate_text, timestamp, raw_id):
         """
-        Save full plate image and thumbnail
-        
-        Args:
-            frame: Full frame image
-            bbox: Plate bounding box
-            plate_text: Detected plate text
-            timestamp: Detection timestamp
-            raw_id: Raw log ID
-            
+        Save full plate image and thumbnail.
+
         Returns:
-            Dictionary with image paths and metadata
+            Dictionary with image paths and metadata, or failure dict.
         """
         try:
-            # Import required modules at the top
-            import cv2
-            import numpy as np
-            
-            # Debug bbox information
-            print(f"DEBUG: save_plate_images called with bbox: {bbox}")
-            print(f"DEBUG: Frame shape: {frame.shape if frame is not None else 'None'}")
-            
-            # If frame is None, create a fallback approach
             if frame is None:
-                print("DEBUG: Frame is None, using fallback approach")
-                # Create a simple placeholder image with the plate text
-                fallback_img = np.ones((100, 300, 3), dtype=np.uint8) * 255  # White background
-                cv2.putText(fallback_img, plate_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-                plate_crop = fallback_img
+                fallback = np.ones((100, 300, 3), dtype=np.uint8) * 255
+                cv2.putText(fallback, plate_text, (10, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                plate_crop = fallback
             else:
-                # Crop plate from frame
                 plate_crop = self.crop_plate_from_frame(frame, bbox)
                 if plate_crop is None:
-                    print("DEBUG: crop_plate_from_frame returned None")
                     raise ValueError("Failed to crop plate from frame")
-            
-            # Enhance the plate image (skip if using fallback)
-            if frame is not None:
-                enhanced_plate = self.enhance_plate_image(plate_crop)
-                if enhanced_plate is None:
-                    enhanced_plate = plate_crop  # Fallback to original crop
-            else:
-                enhanced_plate = plate_crop  # Use fallback image as-is
-            
-            # Create thumbnail
-            thumbnail = self.create_thumbnail(enhanced_plate)
-            if thumbnail is None:
-                thumbnail = enhanced_plate  # Fallback to enhanced plate
-            
-            # Generate filename
+
+            enhanced_plate = self.enhance_plate_image(plate_crop) if frame is not None else plate_crop
+            if enhanced_plate is None:
+                enhanced_plate = plate_crop
+
+            thumbnail = self.create_thumbnail(enhanced_plate) or enhanced_plate
+
             filename_base = self.generate_filename(plate_text, timestamp, raw_id)
-            
-            # Create daily subdirectory
-            daily_dir = os.path.join(self.base_storage_path, "daily", timestamp.strftime("%Y-%m-%d"))
-            os.makedirs(daily_dir, exist_ok=True)
-            
-            # Save full plate image
+            daily_dir = self._get_daily_dir(self.base_storage_path, timestamp)
+
             full_image_path = os.path.join(daily_dir, f"{filename_base}_full.jpg")
+            thumbnail_path  = os.path.join(daily_dir, f"{filename_base}_thumb.jpg")
+
             cv2.imwrite(full_image_path, enhanced_plate, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            
-            # Save thumbnail
-            thumbnail_path = os.path.join(daily_dir, f"{filename_base}_thumb.jpg")
-            cv2.imwrite(thumbnail_path, thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            
-            # Get image metadata
+            cv2.imwrite(thumbnail_path,  thumbnail,      [cv2.IMWRITE_JPEG_QUALITY, 85])
+
             height, width = enhanced_plate.shape[:2]
             file_size = os.path.getsize(full_image_path)
-            
+
             return {
                 'plate_image_path': os.path.abspath(full_image_path),
-                'thumbnail_path': os.path.abspath(thumbnail_path),
-                'image_width': width,
+                'thumbnail_path':   os.path.abspath(thumbnail_path),
+                'image_width':  width,
                 'image_height': height,
-                'image_size': file_size,
+                'image_size':   file_size,
                 'success': True
             }
-            
+
         except Exception as e:
             print(f"Error saving plate images: {e}")
             return {
                 'plate_image_path': None,
-                'thumbnail_path': None,
-                'image_width': None,
+                'thumbnail_path':   None,
+                'image_width':  None,
                 'image_height': None,
-                'image_size': None,
+                'image_size':   None,
                 'success': False,
                 'error': str(e)
             }
-    
+
+    def save_temp_plate_image(self, frame, bbox, plate_text, timestamp, raw_id):
+        """Save candidate plate images to the session temp directory instead of permanent storage."""
+        if self._temp_dir:
+            original = self.base_storage_path
+            self.base_storage_path = self._temp_dir
+            result = self.save_plate_images(frame, bbox, plate_text, timestamp, raw_id)
+            self.base_storage_path = original
+            return result
+        return self.save_plate_images(frame, bbox, plate_text, timestamp, raw_id)
+
+    def promote_to_permanent(self, image_data):
+        """
+        Move the finalized plate images from temp to permanent storage.
+        Returns updated image_data with the new permanent paths.
+        """
+        import shutil
+        if not image_data or not image_data.get('success'):
+            return image_data
+
+        updated = dict(image_data)
+        for key in ('plate_image_path', 'thumbnail_path'):
+            src = image_data.get(key)
+            if not src or not os.path.isfile(src):
+                continue
+            filename = os.path.basename(src)
+            daily_dir = self._get_daily_dir(self.base_storage_path, datetime.now())
+            dst = os.path.join(daily_dir, filename)
+            try:
+                shutil.move(src, dst)
+                updated[key] = os.path.abspath(dst)
+            except Exception as e:
+                print(f"Could not promote image {src}: {e}")
+        return updated
+
     def cleanup_old_images(self, days_to_keep=30):
-        """
-        Clean up old plate images to save disk space
-        
-        Args:
-            days_to_keep: Number of days to keep images
-        """
+        """Clean up old plate images to save disk space."""
         try:
             from datetime import timedelta
+            import shutil
             cutoff_date = datetime.now() - timedelta(days=days_to_keep)
-            
             daily_dir = os.path.join(self.base_storage_path, "daily")
             if not os.path.exists(daily_dir):
                 return
-            
             deleted_count = 0
             for date_folder in os.listdir(daily_dir):
                 try:
                     folder_date = datetime.strptime(date_folder, "%Y-%m-%d")
                     if folder_date < cutoff_date:
-                        folder_path = os.path.join(daily_dir, date_folder)
-                        import shutil
-                        shutil.rmtree(folder_path)
+                        shutil.rmtree(os.path.join(daily_dir, date_folder))
                         deleted_count += 1
                 except (ValueError, OSError):
                     continue
-            
             if deleted_count > 0:
                 print(f"Cleaned up {deleted_count} old image folders")
-                
         except Exception as e:
             print(f"Error during image cleanup: {e}")
-    
+
     def get_image_info(self, image_path):
-        """
-        Get information about a stored image
-        
-        Args:
-            image_path: Path to the image file
-            
-        Returns:
-            Dictionary with image information
-        """
+        """Get metadata for a stored image."""
         try:
             if not os.path.exists(image_path):
                 return None
-            
-            # Read image to get dimensions
-            image = cv2.imread(image_path)
-            if image is None:
+            img = cv2.imread(image_path)
+            if img is None:
                 return None
-            
-            height, width = image.shape[:2]
-            file_size = os.path.getsize(image_path)
-            
+            height, width = img.shape[:2]
             return {
+                'path': image_path,
                 'width': width,
                 'height': height,
-                'size': file_size,
+                'size': os.path.getsize(image_path),
                 'exists': True
             }
-            
         except Exception as e:
-            return {
-                'error': str(e),
-                'exists': False
-            }
-
-
-# Utility functions for easy access
-def save_plate_image(frame, bbox, plate_text, timestamp, raw_id, storage_path="plate_images"):
-    """
-    Convenience function to save plate image
-    
-    Args:
-        frame: Full frame image
-        bbox: Plate bounding box (x, y, width, height)
-        plate_text: Detected plate text
-        timestamp: Detection timestamp
-        raw_id: Raw log ID
-        storage_path: Base storage path
-        
-    Returns:
-        Dictionary with image paths and metadata
-    """
-    processor = PlateImageProcessor(storage_path)
-    return processor.save_plate_images(frame, bbox, plate_text, timestamp, raw_id)
-
-def create_plate_thumbnail(image_path, thumbnail_path=None):
-    """
-    Create thumbnail from existing plate image
-    
-    Args:
-        image_path: Path to full plate image
-        thumbnail_path: Output path for thumbnail (optional)
-        
-    Returns:
-        Path to created thumbnail
-    """
-    try:
-        image = cv2.imread(image_path)
-        if image is None:
+            print(f"Error getting image info: {e}")
             return None
-        
-        processor = PlateImageProcessor()
-        thumbnail = processor.create_thumbnail(image)
-        
-        if thumbnail_path is None:
-            base_name = os.path.splitext(image_path)[0]
-            thumbnail_path = f"{base_name}_thumb.jpg"
-        
-        cv2.imwrite(thumbnail_path, thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        return thumbnail_path
-        
-    except Exception as e:
-        print(f"Error creating thumbnail: {e}")
-        return None
+
+    def create_thumbnail_from_path(self, image_path, output_path=None):
+        """Create a thumbnail from an existing image file."""
+        try:
+            img = cv2.imread(image_path)
+            if img is None:
+                return None
+            thumbnail = self.create_thumbnail(img)
+            if thumbnail is None:
+                return None
+            if output_path is None:
+                base, ext = os.path.splitext(image_path)
+                output_path = f"{base}_thumb{ext}"
+            cv2.imwrite(output_path, thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return output_path
+        except Exception as e:
+            print(f"Error creating thumbnail from path: {e}")
+            return None
+
+
+def save_plate_image(frame, bbox, plate_text, timestamp, raw_id, storage_path="plate_images"):
+    """Module-level convenience wrapper."""
+    processor = PlateImageProcessor(base_storage_path=storage_path)
+    return processor.save_plate_images(frame, bbox, plate_text, timestamp, raw_id)
