@@ -144,8 +144,8 @@ MAX_HISTORY_FRAMES = 8             # Reduced from 10 for faster processing
 MAX_CANDIDATES_PER_VEHICLE = 8     # Increased from 5 for better consensus (more samples)
 
 # Debug settings (disable in production for better performance)
-DEBUG_SAVE_IMAGES = True  # Set to True only for debugging OCR issues
-DEBUG_OCR_VERBOSE = True  # Set to True only for debugging OCR issues (TEMPORARILY ENABLED)
+DEBUG_SAVE_IMAGES = False  # Set to True only when debugging OCR issues
+DEBUG_OCR_VERBOSE = False  # Set to True only when debugging OCR issues
 
 # ===== Parking Fee Settings =====
 # Hourly rate for parking fee calculation (in NPR)
@@ -159,9 +159,12 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587  # TLS port
 SMTP_USE_TLS = True
 
-# Sender email credentials
-EMAIL_SENDER = "nishantkoirala16@gmail.com"
-EMAIL_APP_PASSWORD = "sgvc qzdh yfym kjtq"  # Gmail app password (not regular password)
+# Sender email credentials — set via environment variables, never hardcode here.
+# Windows:  set ANPR_EMAIL_SENDER=you@gmail.com && set ANPR_EMAIL_PASSWORD=app_password
+# Linux:    export ANPR_EMAIL_SENDER=you@gmail.com ANPR_EMAIL_PASSWORD=app_password
+import os as _os
+EMAIL_SENDER = _os.environ.get("ANPR_EMAIL_SENDER", "")
+EMAIL_APP_PASSWORD = _os.environ.get("ANPR_EMAIL_PASSWORD", "")
 
 # Email settings
 EMAIL_FROM_NAME = "NEPALI ANPR System"
