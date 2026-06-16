@@ -374,6 +374,98 @@ class AuthManager:
             traceback.print_exc()
             raise
     
+    def register_user(self, username: str, password: str, role: str, email: str = None, full_name: str = None) -> bool:
+        """
+        Register a new user (wrapper for create_user for invitation system)
+        
+        Args:
+            username: Username
+            password: Plain text password (will be hashed)
+            role: Role name (admin, operator, viewer)
+            email: Email address (optional)
+            full_name: Full name (optional)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            user_id = self.create_user(
+                username=username,
+                password=password,
+                email=email or f"{username}@anpr.local",  # Default email if not provided
+                full_name=full_name,
+                roles=[role.upper()],  # Convert to uppercase for role matching
+                status="ACTIVE"
+            )
+            return user_id is not None
+        except Exception as e:
+            print(f"Registration error: {e}")
+            return False
+    
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get user by username"""
+        with self.get_session() as session:
+            user = session.query(User).filter(User.username == username).first()
+            if user:
+                session.expunge(user)
+            return user
+    
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get user by email"""
+        with self.get_session() as session:
+            user = session.query(User).filter(User.email == email).first()
+            if user:
+                session.expunge(user)
+            return user
+    
+    def update_password(self, username: str, new_password: str,
+                        current_password: Optional[str] = None) -> bool:
+        """
+        Update user password.
+
+        Args:
+            username: Target username.
+            new_password: New plain-text password (will be hashed).
+            current_password: When provided the existing password is verified
+                before the update is allowed.  Pass this whenever the caller is
+                the user themselves (self-service change).  Omit only for
+                verified-token reset flows where the caller has already
+                authenticated the user by a different means.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        try:
+            with self.get_session() as session:
+                user = session.query(User).filter(User.username == username).first()
+
+                if not user:
+                    return False
+
+                if current_password is not None:
+                    if not self.verify_password(current_password, user.password_hash):
+                        self._log_audit(user.user_id, "PASSWORD_CHANGE_FAILED",
+                                        details="Wrong current password supplied")
+                        return False
+
+                user.password_hash = self.hash_password(new_password)
+                user.failed_login_attempts = 0
+
+                if user.status == UserStatus.SUSPENDED:
+                    user.status = UserStatus.ACTIVE
+
+                session.commit()
+
+                self._log_audit(user.user_id, "PASSWORD_RESET",
+                                details=f"Password updated for {username}")
+                return True
+
+        except Exception as e:
+            print(f"Error updating password: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
     def _log_audit(self, user_id: int, action: str, resource_type: str = None, 
                   resource_id: str = None, details: str = None, ip_address: str = None, 
                   success: bool = True):
