@@ -80,9 +80,14 @@ class ToggleManager:
         
         # Cache for recent detections to avoid database queries
         self._recent_detections: Dict[str, Dict[str, Any]] = {}
-        
+
         # Store last stolen vehicle alert for UI pickup
         self._last_stolen_alert = None
+
+        # In-memory stolen plate cache — refreshed at most once every 30 s.
+        # Avoids a DB SELECT on every finalized plate detection.
+        self._stolen_plate_cache: set = set()
+        self._stolen_cache_expiry: datetime = datetime.min
     
     def calculate_plate_similarity(self, plate1: str, plate2: str) -> float:
         """
@@ -344,21 +349,37 @@ class ToggleManager:
             'last_toggle': last_log.toggle_mode.value
         }
     
+    def _refresh_stolen_cache(self):
+        """Reload stolen plate numbers from DB if the 30-second TTL has expired."""
+        now = datetime.utcnow()
+        if now < self._stolen_cache_expiry:
+            return
+        try:
+            vehicles = self.special_db.get_all_stolen_vehicles(status="ACTIVE")
+            self._stolen_plate_cache = {
+                v.plate_number.upper().replace(' ', '')
+                for v in vehicles if v.plate_number
+            }
+            self._stolen_cache_expiry = now + timedelta(seconds=30)
+        except Exception as e:
+            logger.warning(f"Could not refresh stolen vehicle cache: {e}")
+
     def _check_stolen_vehicle(self, plate_text: str, raw_log_id: int):
         """
-        Check if detected plate is a stolen vehicle and log alert
-        
-        Args:
-            plate_text: Detected plate number
-            raw_log_id: Raw log ID for reference
+        Check if detected plate is a stolen vehicle and log alert.
+        Uses a 30-second in-memory cache to avoid a DB SELECT on every detection.
         """
         if not self.special_db:
-            logger.debug("Special vehicles DB not available")
             return
-        
+
         try:
-            logger.debug(f"Checking if {plate_text} is stolen...")
-            # Check if this plate is in stolen vehicles database
+            # Fast path: normalised plate not in cache → skip full DB lookup
+            self._refresh_stolen_cache()
+            normalised = plate_text.upper().replace(' ', '')
+            if normalised not in self._stolen_plate_cache:
+                return
+
+            # Slow path: confirmed candidate — fetch full record for alert details
             stolen_vehicle = self.special_db.check_if_stolen(plate_text)
             logger.debug(f"Stolen vehicle check result: {stolen_vehicle}")
             
