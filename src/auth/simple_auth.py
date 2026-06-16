@@ -2,7 +2,7 @@
 Simple Authentication Manager for ANPR System
 Works with basic user table without complex RBAC
 """
-import hashlib
+import bcrypt
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Dict
@@ -17,12 +17,15 @@ class SimpleAuthManager:
         self.sessions = {}  # Simple in-memory session storage
         
     def hash_password(self, password: str) -> str:
-        """Hash password using SHA256"""
-        return hashlib.sha256(password.encode()).hexdigest()
-    
+        """Hash password using bcrypt"""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
     def verify_password(self, password: str, password_hash: str) -> bool:
-        """Verify password against hash"""
-        return hashlib.sha256(password.encode()).hexdigest() == password_hash
+        """Verify password against bcrypt hash"""
+        try:
+            return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+        except Exception:
+            return False
     
     def generate_session_id(self) -> str:
         """Generate secure session ID"""
@@ -63,7 +66,7 @@ class SimpleAuthManager:
                     'email': user.email,
                     'session_id': session_id,
                     'login_time': datetime.utcnow(),
-                    'is_admin': user.username == 'admin'  # Simple admin check
+                    'is_admin': False  # Admin role is determined via RBAC, not username
                 }
                 
                 self.sessions[session_id] = session_data
