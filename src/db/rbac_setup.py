@@ -1,15 +1,28 @@
 """
 RBAC System Setup and Initialization
 """
+import os
 from sqlalchemy.orm import Session
 from datetime import datetime
 from ..auth.auth_manager import AuthManager, Permissions, Roles
 from .rbac_models import User, Role, Permission, RolePermission, UserRole, UserStatus
 
-def initialize_rbac_system(db_session_factory, admin_username: str = "admin", admin_password: str = "admin123"):
+def initialize_rbac_system(db_session_factory, admin_username: str = "admin",
+                            admin_password: str = None):
     """
-    Initialize RBAC system with default roles, permissions, and admin user
+    Initialize RBAC system with default roles, permissions, and admin user.
+
+    admin_password must be supplied explicitly or via the ANPR_ADMIN_PASSWORD
+    environment variable.  The function raises ValueError if neither is provided
+    so that the system is never initialised with an empty credential.
     """
+    if admin_password is None:
+        admin_password = os.environ.get("ANPR_ADMIN_PASSWORD")
+    if not admin_password:
+        raise ValueError(
+            "Admin password is required. Pass admin_password= or set "
+            "the ANPR_ADMIN_PASSWORD environment variable."
+        )
     with db_session_factory() as session:
         # Create default permissions
         default_permissions = [
@@ -136,8 +149,7 @@ def initialize_rbac_system(db_session_factory, admin_username: str = "admin", ad
         
         session.commit()
         print("✅ RBAC system initialized successfully")
-        print(f"📝 Default admin user: {admin_username} / {admin_password}")
-        print("🔐 Please change the default password after first login!")
+        print(f"📝 Admin user: {admin_username} — change the password after first login!")
 
 def create_sample_users(db_session_factory):
     """Create sample users for testing"""
