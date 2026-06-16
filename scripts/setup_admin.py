@@ -23,8 +23,10 @@ def setup_admin():
         Base.metadata.create_all(db.engine)
         print("✅ RBAC tables created")
         
-        # Initialize RBAC system with default admin
-        initialize_rbac_system(db.get_session)
+        # Initialize RBAC system — password from env var or prompt
+        import getpass
+        admin_pwd = os.environ.get("ANPR_ADMIN_PASSWORD") or getpass.getpass("Enter admin password: ")
+        initialize_rbac_system(db.get_session, admin_password=admin_pwd)
         print("✅ RBAC system initialized")
         
         # Create sample users including admin
@@ -33,13 +35,9 @@ def setup_admin():
         
         print("\n🎉 Super Admin Setup Complete!")
         print("=" * 40)
-        print("Default Super Admin Credentials:")
-        print("Username: admin")
-        print("Password: admin123")
-        print("Role: SUPERADMIN")
-        print("Access: Full system control")
+        print("Admin username: admin | Role: SUPERADMIN")
         print("=" * 40)
-        print("\n⚠️  IMPORTANT: Change the default password after first login!")
+        print("\n⚠️  IMPORTANT: Change the password after first login!")
         
         return True
         
@@ -52,6 +50,6 @@ def setup_admin():
 if __name__ == "__main__":
     success = setup_admin()
     if success:
-        print("\n✅ You can now login with username 'admin' and password 'admin123'")
+        print("\n✅ You can now login with username 'admin' and the password you set.")
     else:
         print("\n❌ Setup failed. Check the error messages above.")
