@@ -383,14 +383,17 @@ class PlateReader:
                 import re
                 
                 # Step 1: Common character substitutions (OCR mistakes)
+                # Only include unambiguous substitutions — characters that are
+                # never valid letters in Nepali plate district codes.
+                # B, S, G are valid district-code prefix letters and must NOT
+                # be substituted here; the format_text() position-based mapper
+                # handles digit-position corrections downstream.
                 char_substitutions = {
-                    '|': 'I', '!': 'I', '1': 'I',  # Vertical lines to I
-                    '/': '7', '\\': '7',           # Slashes to 7
-                    'Q': 'O', '@': 'O',            # Similar to O
-                    'B': '8', '&': '8',            # Similar to 8
-                    'Z': '2',                       # Similar to 2
-                    'S': '5',                       # Similar to 5
-                    'G': '6',                       # Similar to 6
+                    '|': 'I', '!': 'I',  # Vertical lines to I
+                    '/': '7', '\\': '7', # Slashes to 7
+                    'Q': 'O', '@': 'O',  # Similar to O
+                    '&': '8',            # Ampersand to 8
+                    'Z': '2',            # Similar to 2
                 }
                 
                 # Apply substitutions for likely positions
