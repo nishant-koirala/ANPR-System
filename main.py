@@ -93,6 +93,15 @@ class ANPRApplication(PlateDetectorDashboard):
                 self.worker.set_debug_dir(self.debug_dir)
             except Exception:
                 pass
+
+        # Point the image processor at the session temp dir so candidate
+        # images land there and only finalized ones go to plate_images/
+        if hasattr(self, 'session_temp_dir'):
+            try:
+                temp_plates_dir = os.path.join(self.session_temp_dir, 'plate_candidates')
+                self.worker.image_processor.set_temp_dir(temp_plates_dir)
+            except Exception:
+                pass
         
         # Connect stolen vehicle alert signal
         self.stolen_vehicle_detected.connect(self.show_stolen_vehicle_alert)
@@ -239,7 +248,11 @@ class ANPRApplication(PlateDetectorDashboard):
                                 # Log to database with image data
                                 try:
                                     image_data = p.get('image_data', {})
-                                    self.log_detection_to_database(final_plate_text, final_confidence, 
+                                    # Move this plate's image from temp → permanent storage
+                                    # (candidate images for plates that were never finalized
+                                    #  stay in temp and are deleted when the session ends)
+                                    image_data = self.worker.image_processor.promote_to_permanent(image_data)
+                                    self.log_detection_to_database(final_plate_text, final_confidence,
                                                                   f"frame_{self.frame_counter}", 
                                                                   [abs_px1, abs_py1, abs_px2, abs_py2],
                                                                   image_data)
