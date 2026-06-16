@@ -491,7 +491,7 @@ class ANPRApplication(PlateDetectorDashboard):
         
         candidates = self.vehicle_plate_candidates[vehicle_id]
         self.vehicle_plate_candidates[vehicle_id] = [
-            (p, c, count) for p, c, count in candidates if p != plate_text
+            item for item in candidates if item[0] != plate_text
         ]
     
     def add_detection_to_table(self, track_id, plate_text, confidence, plate_img):
