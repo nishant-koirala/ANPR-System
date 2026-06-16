@@ -16,6 +16,17 @@ try:
 except ImportError:
     UI_STYLES_AVAILABLE = False
 
+# Import invitation system dialogs
+try:
+    from .registration_dialog import RegistrationDialog
+    from .password_reset_dialog import PasswordResetCompleteDialog
+    from ..db.invitation_db import InvitationDB
+    from ..db.database import get_database
+    INVITATION_SYSTEM_AVAILABLE = True
+except ImportError:
+    INVITATION_SYSTEM_AVAILABLE = False
+    print("⚠️  Invitation system not available")
+
 class LoginThread(QThread):
     """Background thread for login authentication"""
     login_success = pyqtSignal(dict)
@@ -43,6 +54,17 @@ class LoginDialog(QDialog):
         self.auth_manager = auth_manager
         self.user_info = None
         self.login_thread = None
+        
+        # Initialize invitation system
+        if INVITATION_SYSTEM_AVAILABLE:
+            try:
+                db = get_database()
+                self.invitation_db = InvitationDB(db.get_session)
+            except Exception as e:
+                print(f"⚠️  Failed to initialize invitation system: {e}")
+                self.invitation_db = None
+        else:
+            self.invitation_db = None
         
         self.init_ui()
         self.setup_connections()
@@ -165,6 +187,48 @@ class LoginDialog(QDialog):
         self.status_label.setStyleSheet("color: #dc3545; font-weight: bold;")
         self.status_label.hide()
         
+        # Additional options layout (Registration & Password Reset)
+        options_layout = QHBoxLayout()
+        options_layout.setSpacing(10)
+        
+        if INVITATION_SYSTEM_AVAILABLE and self.invitation_db:
+            # Complete Registration button
+            self.register_btn = QPushButton("📧 Complete Registration")
+            self.register_btn.setMinimumHeight(35)
+            self.register_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #667eea;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    padding: 8px 16px;
+                }
+                QPushButton:hover {
+                    background-color: #5568d3;
+                }
+            """)
+            
+            # Reset Password button
+            self.reset_btn = QPushButton("🔐 Reset Password")
+            self.reset_btn.setMinimumHeight(35)
+            self.reset_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #f39c12;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    padding: 8px 16px;
+                }
+                QPushButton:hover {
+                    background-color: #e67e22;
+                }
+            """)
+            
+            options_layout.addWidget(self.register_btn)
+            options_layout.addWidget(self.reset_btn)
+        
         # Footer
         footer_label = QLabel("Enter your credentials to access the system")
         footer_label.setAlignment(Qt.AlignCenter)
@@ -176,6 +240,8 @@ class LoginDialog(QDialog):
         main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(self.status_label)
         main_layout.addLayout(button_layout)
+        if INVITATION_SYSTEM_AVAILABLE and self.invitation_db:
+            main_layout.addLayout(options_layout)
         main_layout.addWidget(footer_label)
         
         self.setLayout(main_layout)
@@ -307,6 +373,11 @@ class LoginDialog(QDialog):
         self.password_edit.returnPressed.connect(self.handle_login)
         self.username_edit.returnPressed.connect(self.password_edit.setFocus)
         
+        # Connect invitation system buttons
+        if INVITATION_SYSTEM_AVAILABLE and self.invitation_db:
+            self.register_btn.clicked.connect(self.open_registration)
+            self.reset_btn.clicked.connect(self.open_password_reset)
+        
     def handle_login(self):
         """Handle login button click"""
         username = self.username_edit.text().strip()
@@ -377,6 +448,58 @@ class LoginDialog(QDialog):
     def get_user_info(self):
         """Get authenticated user information"""
         return self.user_info
+    
+    def open_registration(self):
+        """Open registration completion dialog"""
+        try:
+            dialog = RegistrationDialog(
+                self.invitation_db,
+                self.auth_manager,
+                self
+            )
+            if dialog.exec_() == QDialog.Accepted:
+                QMessageBox.information(
+                    self,
+                    "✅ Registration Complete",
+                    "Your account has been created successfully!\n\n"
+                    "You can now login with your username and password."
+                )
+                self.username_edit.setFocus()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open registration dialog:\n{str(e)}"
+            )
+            print(f"Registration dialog error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def open_password_reset(self):
+        """Open password reset dialog"""
+        try:
+            dialog = PasswordResetCompleteDialog(
+                self.invitation_db,
+                self.auth_manager,
+                self
+            )
+            if dialog.exec_() == QDialog.Accepted:
+                QMessageBox.information(
+                    self,
+                    "✅ Password Reset Complete",
+                    "Your password has been reset successfully!\n\n"
+                    "You can now login with your new password."
+                )
+                self.username_edit.setFocus()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open password reset dialog:\n{str(e)}"
+            )
+            print(f"Password reset dialog error: {e}")
+            import traceback
+            traceback.print_exc()
     
     def closeEvent(self, event):
         """Handle dialog close event"""
