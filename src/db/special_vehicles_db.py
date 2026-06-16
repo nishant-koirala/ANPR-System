@@ -97,9 +97,12 @@ class SpecialVehiclesDB:
     def get_stolen_vehicle_by_plate(self, plate_number: str) -> Optional[StolenVehicle]:
         """Get stolen vehicle by plate number"""
         with self.session_factory() as session:
-            return session.query(StolenVehicle).filter_by(
+            vehicle = session.query(StolenVehicle).filter_by(
                 plate_number=plate_number.upper()
             ).first()
+            if vehicle:
+                session.expunge(vehicle)
+            return vehicle
     
     def get_all_stolen_vehicles(self, status: str = None) -> List[StolenVehicle]:
         """
@@ -290,9 +293,12 @@ class SpecialVehiclesDB:
     def get_staff_vehicle_by_plate(self, plate_number: str) -> Optional[StaffVehicle]:
         """Get staff vehicle by plate number"""
         with self.session_factory() as session:
-            return session.query(StaffVehicle).filter_by(
+            vehicle = session.query(StaffVehicle).filter_by(
                 plate_number=plate_number.upper()
             ).first()
+            if vehicle:
+                session.expunge(vehicle)
+            return vehicle
     
     def get_all_staff_vehicles(self, department: str = None) -> List[StaffVehicle]:
         """
