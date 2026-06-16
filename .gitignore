@@ -294,6 +294,7 @@ package-lock.json
 
 DIAGRAMS/
 DOCUMENTATION/
+documentation/
 FINAL_STATUS.md
 GIT_COMMIT_GUIDE.md
 .$ANPR_USE_CASE_DIAGRAM.drawio.dtmp
