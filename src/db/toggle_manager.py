@@ -9,7 +9,7 @@ from difflib import SequenceMatcher
 from typing import Dict, Any, Optional
 from enum import Enum
 
-from src.db.database import Database
+from src.db.database import Database, get_database
 from src.db.models import VehicleLog, ToggleMode
 from src.db.special_vehicles_db import SpecialVehiclesDB
 
@@ -100,7 +100,7 @@ class ToggleManager:
         p2 = plate2.replace(' ', '').upper()
         
         # Use difflib for sequence matching
-        similarity = difflib.SequenceMatcher(None, p1, p2).ratio()
+        similarity = SequenceMatcher(None, p1, p2).ratio()
         
         logger.debug(f"Plate similarity: '{plate1}' vs '{plate2}' = {similarity:.2f}")
         return similarity
