@@ -235,16 +235,16 @@ class SpecialVehiclesPage(QWidget):
         
         # Table
         self.stolen_table = QTableWidget()
-        self.stolen_table.setColumnCount(7)
+        self.stolen_table.setColumnCount(8)
         self.stolen_table.setHorizontalHeaderLabels([
             "ID", "Plate Number", "Owner Name", "Vehicle Type", 
-            "Color", "Reported Date", "Status"
+            "Color", "Reported Date", "Status", "Actions"
         ])
         
         self.stolen_table.setStyleSheet("""
             QTableWidget {
-                border: 2px solid #bdc3c7;
-                border-radius: 5px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
                 background: white;
                 gridline-color: #ecf0f1;
             }
@@ -252,15 +252,27 @@ class SpecialVehiclesPage(QWidget):
                 padding: 8px;
             }
             QHeaderView::section {
-                background: #e74c3c;
+                background-color: #2c3e50;
                 color: white;
                 padding: 10px;
                 border: none;
                 font-weight: bold;
+                font-size: 13px;
             }
         """)
         
-        self.stolen_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Set column resize modes
+        header = self.stolen_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # ID
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Plate
+        header.setSectionResizeMode(2, QHeaderView.Stretch)  # Owner
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Type
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Color
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Date
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(7, QHeaderView.Fixed)  # Actions
+        self.stolen_table.setColumnWidth(7, 250)  # Actions column width
+        
         self.stolen_table.setAlternatingRowColors(True)
         self.stolen_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.stolen_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -342,16 +354,16 @@ class SpecialVehiclesPage(QWidget):
         
         # Table
         self.staff_table = QTableWidget()
-        self.staff_table.setColumnCount(10)
+        self.staff_table.setColumnCount(11)
         self.staff_table.setHorizontalHeaderLabels([
             "ID", "Plate Number", "Staff Name", "Department", "Position",
-            "Vehicle Type", "Color", "Valid From", "Valid Until", "Status"
+            "Vehicle Type", "Color", "Valid From", "Valid Until", "Status", "Actions"
         ])
         
         self.staff_table.setStyleSheet("""
             QTableWidget {
-                border: 2px solid #bdc3c7;
-                border-radius: 5px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
                 background: white;
                 gridline-color: #ecf0f1;
             }
@@ -359,15 +371,30 @@ class SpecialVehiclesPage(QWidget):
                 padding: 8px;
             }
             QHeaderView::section {
-                background: #27ae60;
+                background-color: #2c3e50;
                 color: white;
                 padding: 10px;
                 border: none;
                 font-weight: bold;
+                font-size: 13px;
             }
         """)
         
-        self.staff_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Set column resize modes
+        header = self.staff_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # ID
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Plate
+        header.setSectionResizeMode(2, QHeaderView.Stretch)  # Staff Name
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Department
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Position
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Type
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Color
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Valid From
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Valid Until
+        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(10, QHeaderView.Fixed)  # Actions
+        self.staff_table.setColumnWidth(10, 200)  # Actions column width
+        
         self.staff_table.setAlternatingRowColors(True)
         self.staff_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.staff_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -638,6 +665,76 @@ class SpecialVehiclesPage(QWidget):
             elif vehicle.status == 'Recovered':
                 status_item.setForeground(QColor('#27ae60'))
             self.stolen_table.setItem(row, 6, status_item)
+            
+            # Action buttons
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(5)
+            
+            # Edit button
+            edit_btn = QPushButton("✏ Edit")
+            edit_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498DB;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #2980B9;
+                }
+            """)
+            edit_btn.clicked.connect(lambda checked, v_id=vehicle.id: self.edit_stolen_vehicle(v_id))
+            
+            # Delete button
+            delete_btn = QPushButton("🗑 Delete")
+            delete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #E74C3C;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #C0392B;
+                }
+            """)
+            delete_btn.clicked.connect(lambda checked, v_id=vehicle.id: self.delete_stolen_vehicle(v_id))
+            
+            # Recover button (only for Active status)
+            if vehicle.status == 'Active':
+                recover_btn = QPushButton("✓ Recover")
+                recover_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #27AE60;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 6px 12px;
+                        font-size: 12px;
+                        font-weight: 600;
+                        min-width: 60px;
+                    }
+                    QPushButton:hover {
+                        background-color: #229954;
+                    }
+                """)
+                recover_btn.clicked.connect(lambda checked, v_id=vehicle.id: self.mark_as_recovered(v_id))
+                actions_layout.addWidget(recover_btn)
+            
+            actions_layout.addWidget(edit_btn)
+            actions_layout.addWidget(delete_btn)
+            
+            self.stolen_table.setCellWidget(row, 7, actions_widget)
     
     def load_staff_vehicles(self):
         """Load staff vehicles into table"""
@@ -688,6 +785,55 @@ class SpecialVehiclesPage(QWidget):
             elif vehicle.status == 'Expired':
                 status_item.setForeground(QColor('#e74c3c'))
             self.staff_table.setItem(row, 9, status_item)
+            
+            # Action buttons
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(5)
+            
+            # Edit button
+            edit_btn = QPushButton("✏ Edit")
+            edit_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498DB;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #2980B9;
+                }
+            """)
+            edit_btn.clicked.connect(lambda checked, v_id=vehicle.id: self.edit_staff_vehicle(v_id))
+            
+            # Delete button
+            delete_btn = QPushButton("🗑 Delete")
+            delete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #E74C3C;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #C0392B;
+                }
+            """)
+            delete_btn.clicked.connect(lambda checked, v_id=vehicle.id: self.delete_staff_vehicle(v_id))
+            
+            actions_layout.addWidget(edit_btn)
+            actions_layout.addWidget(delete_btn)
+            
+            self.staff_table.setCellWidget(row, 10, actions_widget)
     
     def load_alert_configuration(self):
         """Load alert configuration"""
